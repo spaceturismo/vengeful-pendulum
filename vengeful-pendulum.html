@@ -1,0 +1,2153 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Vengeful Pendulum</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=Chivo+Mono&display=swap">
+<style>
+/* Layout concept: one arcade-cabinet stage. Canvas is the page; a slim control legend sits underneath. Single committed look (loud, clashing, deliberately unreasonable). */
+:root {
+  --bg: #14002e;
+  --fg: #fff7a8;
+  --hot: #ff2fd1;
+  --acid: #b6ff00;
+  --sky: #00e5ff;
+  --ink: #0a0014;
+  --muted: #c9a8ff;
+  --display: "Bowlby One", Impact, sans-serif;
+  --body: "Chivo Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { background: var(--bg); }
+body {
+  color: var(--fg);
+  font-family: var(--body);
+  padding-block: 20px 32px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 960px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+h1 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(28px, 6vw, 52px);
+  line-height: 1;
+  margin: 0;
+  color: var(--acid);
+  text-shadow: 3px 3px 0 var(--hot), 6px 6px 0 var(--ink);
+  text-wrap: balance;
+}
+.tag { margin: 8px 0 0; color: var(--muted); max-width: 65ch; line-height: 1.5; }
+canvas {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 960 / 600;
+  display: block;
+  background: #000;
+  border: 4px solid var(--hot);
+  border-radius: 6px;
+  box-shadow: 8px 8px 0 var(--sky);
+  cursor: pointer;
+}
+.legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 24px; line-height: 1.5; }
+.legend div { min-width: 0; }
+.legend b { color: var(--acid); font-weight: 400; display: block; text-transform: uppercase; letter-spacing: .08em; font-size: 12px; }
+kbd {
+  font-family: var(--body);
+  background: var(--ink);
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--fg);
+}
+.note { color: var(--muted); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { canvas { box-shadow: none; } }
+</style>
+
+<main class="wrap">
+  <header>
+    <h1>Vengeful Pendulum</h1>
+    <p class="tag">A dangerously sunny open-world D&amp;D campaign for two partners at one keyboard. The world is slowly turning unreasonable. Explore it, fix it, and make the story make sense before the week runs out.</p>
+  </header>
+  <canvas id="c" width="960" height="600" tabindex="0" aria-label="Vengeful Pendulum game"></canvas>
+  <section class="legend" aria-label="Controls">
+    <div id="lg1"></div>
+    <div id="lg2"></div>
+    <div><b>Everyone</b><kbd>Space</kbd> continue &middot; <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> shop &middot; <kbd>M</kbd> sound &middot; <kbd>Esc</kbd> pause &middot; <kbd>C</kbd> controls</div>
+    <div><b>Heads up</b><span class="note">Needs a desktop keyboard. Colors drift slowly, nothing strobes.</span></div>
+  </section>
+</main>
+
+<script>
+(function () {
+'use strict';
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h) { this.rect(x, y, w, h); };
+}
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 960, H = 600;
+const DISP = '"Bowlby One", Impact, sans-serif';
+const BODY = '"Chivo Mono", ui-monospace, monospace';
+const rnd = (a, b) => a + Math.random() * (b - a);
+const ri = (a, b) => Math.floor(rnd(a, b + 1));
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+/* ---------- input ---------- */
+const keys = {};
+const pressed = new Set();
+const BLOCK = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Slash'];
+addEventListener('keydown', e => {
+  if (!e.ctrlKey && !e.metaKey && (BLOCK.includes(e.code) || isBound(e.code))) e.preventDefault();
+  if (!keys[e.code]) pressed.add(e.code);
+  keys[e.code] = true;
+  initAudio();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (G.scene === 'play') paused = true; });
+const DEFAULT_KEYS = [
+  { u: 'KeyW', d: 'KeyS', l: 'KeyA', r: 'KeyD', a: 'KeyF', s: 'KeyG' },
+  { u: 'ArrowUp', d: 'ArrowDown', l: 'ArrowLeft', r: 'ArrowRight', a: 'Enter', s: 'Slash' }
+];
+const RESERVED = ['Escape', 'KeyP', 'KeyM', 'KeyK'];
+const KFIELDS = ['u', 'd', 'l', 'r', 'a', 's'];
+const KLABELS = { u: 'Move up', d: 'Move down', l: 'Move left', r: 'Move right', a: 'Swing', s: 'Special' };
+let CTRL = JSON.parse(JSON.stringify(DEFAULT_KEYS));
+try {
+  const sv = JSON.parse(localStorage.getItem('vp-keys') || 'null');
+  if (sv && sv.length === 2 && sv.every(c => KFIELDS.every(k => typeof c[k] === 'string'))) CTRL = sv;
+} catch (e) {}
+let KM = null;
+function isBound(code) { return CTRL.some(c => KFIELDS.some(k => c[k] === code)); }
+function kn(c) {
+  const m = { ArrowUp: '\u2191', ArrowDown: '\u2193', ArrowLeft: '\u2190', ArrowRight: '\u2192', Slash: '/', Period: '.', Comma: ',',
+    Semicolon: ';', Quote: "'", BracketLeft: '[', BracketRight: ']', Backslash: '\\', Minus: '-', Equal: '=', Backquote: '`',
+    ShiftLeft: 'L-Shift', ShiftRight: 'R-Shift', ControlLeft: 'L-Ctrl', ControlRight: 'R-Ctrl', AltLeft: 'L-Alt', AltRight: 'R-Alt' };
+  if (m[c]) return m[c];
+  return c.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ');
+}
+function saveKeys() { try { localStorage.setItem('vp-keys', JSON.stringify(CTRL)); } catch (e) {} }
+function ctlStr(i) { const c = CTRL[i]; return `${kn(c.u)} ${kn(c.l)} ${kn(c.d)} ${kn(c.r)} + ${kn(c.a)} + ${kn(c.s)}`; }
+function updateLegend() {
+  const f = (i, n) => { const c = CTRL[i]; return `<b>${n}</b><kbd>${kn(c.u)}</kbd><kbd>${kn(c.l)}</kbd><kbd>${kn(c.d)}</kbd><kbd>${kn(c.r)}</kbd> move &middot; <kbd>${kn(c.a)}</kbd> swing &middot; <kbd>${kn(c.s)}</kbd> special`; };
+  const a = document.getElementById('lg1'), b = document.getElementById('lg2');
+  if (a) a.innerHTML = f(0, 'Sir Quibble (P1)');
+  if (b) b.innerHTML = f(1, 'Dame Grimsby (P2)');
+}
+updateLegend();
+function openKM() { KM = { row: 0, wait: false, msg: 'Pick a row, press Enter or click, then press the new key.' }; }
+function updateKM() {
+  const rowOf = n => [Math.floor(n / 6), KFIELDS[n % 6]];
+  if (KM.wait) {
+    for (const code of pressed) {
+      if (code === 'Escape') { KM.wait = false; KM.msg = 'Cancelled.'; return; }
+      if (RESERVED.includes(code)) { KM.msg = `${kn(code)} is reserved (pause, sound, skip orientation). Pick another key.`; return; }
+      const [pi, k] = rowOf(KM.row);
+      const old = CTRL[pi][k];
+      let note = '';
+      for (let i = 0; i < 2; i++) for (const kk of KFIELDS) {
+        if (CTRL[i][kk] === code && !(i === pi && kk === k)) { CTRL[i][kk] = old; note = ` Swapped with ${i ? 'Dame Grimsby' : 'Sir Quibble'}'s ${KLABELS[kk].toLowerCase()}.`; }
+      }
+      CTRL[pi][k] = code;
+      saveKeys(); updateLegend();
+      KM.wait = false; KM.msg = `${KLABELS[k]} is now ${kn(code)}.${note}`;
+      return;
+    }
+    return;
+  }
+  if (pressed.has('Escape') || pressed.has('Backspace')) { KM = null; return; }
+  if (pressed.has('ArrowDown')) KM.row = Math.floor(KM.row / 6) * 6 + (KM.row % 6 + 1) % 6;
+  if (pressed.has('ArrowUp')) KM.row = Math.floor(KM.row / 6) * 6 + (KM.row % 6 + 5) % 6;
+  if (pressed.has('ArrowLeft') || pressed.has('ArrowRight')) KM.row = (KM.row + 6) % 12;
+  if (pressed.has('Enter') || pressed.has('Space')) { KM.wait = true; KM.msg = 'Press the new key. Esc cancels.'; }
+  if (pressed.has('KeyR')) { CTRL = JSON.parse(JSON.stringify(DEFAULT_KEYS)); saveKeys(); updateLegend(); KM.msg = 'Controls reset to defaults.'; }
+}
+const KROW = n => ({ x: 50 + Math.floor(n / 6) * 450, y: 146 + (n % 6) * 52, w: 410, h: 44 });
+const KBTN = { reset: { x: W / 2 - 320, y: 530, w: 300, h: 44 }, back: { x: W / 2 + 20, y: 530, w: 300, h: 44 } };
+function drawKM() {
+  ctx.fillStyle = hsl(hueNow() + 220, 45, 14); ctx.fillRect(0, 0, W, H);
+  txt('CONTROLS', W / 2, 52, 40, '#fff36b', 'center', DISP, INK, 7);
+  txt('Up/Down: choose  |  Left/Right: switch player  |  Enter or click: rebind  |  R: reset  |  Esc: back', W / 2, 92, 12, '#c9a8ff', 'center', BODY, INK, 0);
+  ['Sir Quibble (P1)', 'Dame Grimsby (P2)'].forEach((n, i) => txt(n, 50 + i * 450 + 205, 128, 17, hsl(i ? 190 : 322, 100, 72), 'center', BODY, INK, 0));
+  for (let n = 0; n < 12; n++) {
+    const b = KROW(n), pi = Math.floor(n / 6), k = KFIELDS[n % 6];
+    const sel = n === KM.row;
+    ctx.fillStyle = sel ? hsl(pi ? 190 : 322, 80, 40) : 'rgba(255,255,255,.1)'; ctx.strokeStyle = sel ? '#fff' : '#5a3a7a'; ctx.lineWidth = sel ? 4 : 2;
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 8); ctx.fill(); ctx.stroke();
+    txt(KLABELS[k], b.x + 18, b.y + 23, 17, '#fff', 'left', BODY, INK, 0);
+    const waiting = sel && KM.wait;
+    ctx.fillStyle = waiting ? '#ffe14d' : '#0a0014'; ctx.strokeStyle = '#c9a8ff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(b.x + b.w - 150, b.y + 5, 134, 34, 6); ctx.fill(); ctx.stroke();
+    txt(waiting ? 'press a key' : kn(CTRL[pi][k]), b.x + b.w - 83, b.y + 23, 15, waiting ? INK : '#fff', 'center', BODY, INK, 0);
+  }
+  const lines = wrap(KM.msg || '', 820, 14);
+  lines.forEach((l, i) => txt(l, W / 2, 488 + i * 18, 14, '#fff', 'center', BODY, INK, 0));
+  [[KBTN.reset, 'Reset defaults (R)', 40], [KBTN.back, 'Back (Esc)', 130]].forEach(([b, label, h]) => {
+    ctx.fillStyle = hsl(h + hueNow(), 80, 45); ctx.strokeStyle = INK; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 8); ctx.fill(); ctx.stroke();
+    txt(label, b.x + b.w / 2, b.y + 23, 16, '#fff', 'center', DISP, INK, 4);
+  });
+}
+
+/* ---------- game state ---------- */
+let T = 0;
+let D = null;
+let E = null;
+let SH = null;
+let paused = false;
+let skipTut = false;
+const G = { scene: 'title', mode: 2, day: 1, chaos: 0, sense: 50, thing: 3, story: [], sum: null,
+  upg: { dmg: 0, spd: 0, hp: 0, shade: 0, pend: 0, coffee: 0 }, stats: { wins: 0, fails: 0, kills: 0 } };
+const A_NAME = 'Sir Quibble', B_NAME = 'Dame Grimsby', P_NAME = 'Pip';
+
+const ET = {
+  goblin:   { hp: 1, sp: 100, r: 12, dmg: 1, drop: 1 },
+  skeleton: { hp: 2, sp: 66,  r: 14, dmg: 1, drop: 2 },
+  slime:    { hp: 3, sp: 46,  r: 16, dmg: 1, drop: 2 },
+  mimic:    { hp: 3, sp: 120, r: 15, dmg: 2, drop: 4 },
+  dragon:   { hp: 6, sp: 44,  r: 24, dmg: 2, drop: 6 },
+  beholder: { hp: 8, sp: 32,  r: 26, dmg: 2, drop: 8 },
+  pivot:    { hp: 14, sp: 0, r: 22, dmg: 0, drop: 10 }
+};
+const ENAMES = ['goblin', 'skeleton', 'slime', 'mimic', 'dragon', 'beholder'];
+
+const LABELS = {
+  thing: ['Thingamajigs', 'Thingies', 'Doodads', 'Whatsits', 'Stuff, Numerically'],
+  sense: ['Reasonableness', 'Plausibility', 'Vibes (Audited)', 'Sensible-ish'],
+  plot:  ['Plot points', 'Story bits', 'Narrative crumbs', 'Lore, loosely'],
+  day:   ['Session', 'Sessionish', 'Tuesday', 'Sometime']
+};
+function lc() { return (D && G.scene === 'play' && D.tut) ? D.tut.reb : G.chaos; }
+function vl() { if (D && D.world) return D.w.unr / 11; if (D && G.scene === 'play' && D.tut) return D.tut.reb; return G.chaos + (G.day - 1) * .5; }
+function L(k) {
+  const arr = LABELS[k];
+  const lcv = lc();
+  if (!lcv) return arr[0];
+  const bucket = Math.floor(T / 4);
+  const h = (Math.imul(bucket + 7, 2654435761) ^ Math.imul(k.length * 97 + 13, 40503)) >>> 0;
+  if ((h % 100) / 100 < Math.min(.9, lcv * .14)) return arr[1 + (h % (arr.length - 1))];
+  return arr[0];
+}
+
+/* ---------- audio: absolute improv ---------- */
+let AC = null, master = null, musicOn = true, nextT = 0, step = 0, noiseBuf = null;
+const SCALES = [[0, 2, 4, 7, 9], [0, 3, 5, 7, 10], [0, 2, 3, 6, 7, 8, 11], [0, 1, 5, 7, 8], [0, 2, 4, 6, 8, 10]];
+let scale = SCALES[0], root = 57;
+function initAudio() {
+  if (!AC) {
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      master = AC.createGain(); master.gain.value = .55; master.connect(AC.destination);
+      noiseBuf = AC.createBuffer(1, AC.sampleRate * .2, AC.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    } catch (e) { AC = null; }
+  }
+  if (AC && AC.state === 'suspended') { try { AC.resume(); } catch (e) {} }
+}
+function note(f, t, dur, type, vol) {
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(f, t);
+  if (type === 'sawtooth') {
+    const lfo = AC.createOscillator(), lg = AC.createGain();
+    lfo.frequency.value = rnd(5, 9); lg.gain.value = f * .02;
+    lfo.connect(lg); lg.connect(o.frequency); lfo.start(t); lfo.stop(t + dur + .05);
+  }
+  g.gain.setValueAtTime(.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + .01);
+  g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + .05);
+}
+function noiseHit(t) {
+  const s = AC.createBufferSource(), g = AC.createGain();
+  s.buffer = noiseBuf;
+  g.gain.setValueAtTime(.05, t); g.gain.exponentialRampToValueAtTime(.0001, t + .09);
+  s.connect(g); g.connect(master); s.start(t); s.stop(t + .12);
+}
+function voice(t, sad) {
+  let m = root + pick(scale) + pick(sad ? [0, 12] : [0, 0, 12, 12, 24]);
+  if (!sad && Math.random() < G.chaos * .04) m += ri(-3, 3);
+  const f = 440 * Math.pow(2, (m - 69) / 12);
+  const type = sad ? 'sine' : pick(['square', 'sawtooth', 'triangle', 'sine', 'triangle']);
+  const dur = sad ? 1.3 : rnd(.08, .5);
+  note(f, t, dur, type, sad ? .06 : .045);
+  if (!sad && Math.random() < .15) note(f * 1.5, t, dur, type, .03);
+  if (!sad && step % 4 === 0) note(f / 4, t, .35, 'triangle', .07);
+  if (!sad && Math.random() < .1) noiseHit(t);
+}
+function musicTick() {
+  if (!AC || !musicOn || AC.state !== 'running') return;
+  const now = AC.currentTime, sad = G.scene === 'end';
+  if (nextT < now - .5) nextT = now + .05;
+  while (nextT < now + .35) {
+    voice(nextT, sad);
+    step++;
+    if (step % ri(10, 22) === 0) { scale = pick(sad ? [SCALES[1]] : SCALES); root = pick([52, 55, 57, 59, 62, 64]); }
+    const base = sad ? .55 : clamp(.2 - G.chaos * .012, .1, .3);
+    nextT += base * pick(sad ? [1, 1, 2, 1.5] : [1, 1, .5, .5, .5, 2, .75, 1.5, .25]) * rnd(.9, 1.1);
+  }
+}
+function tone(f, dur, type, vol, slide) {
+  if (!AC || !musicOn || AC.state !== 'running') return;
+  const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain();
+  o.type = type || 'square'; o.frequency.setValueAtTime(f, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, f * slide), t + dur);
+  g.gain.setValueAtTime(vol || .1, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + .02);
+}
+const sfx = {
+  swing: () => tone(520, .06, 'triangle', .05, .6),
+  hit: () => tone(220, .08, 'square', .09, .5),
+  pick: () => tone(880, .09, 'sine', .08, 1.6),
+  plot: () => { tone(660, .12, 'triangle', .12); setTimeout(() => tone(990, .22, 'triangle', .12), 90); },
+  hurt: () => tone(170, .25, 'sawtooth', .11, .4),
+  win: () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, .25, 'triangle', .1), i * 110)),
+  fail: () => [392, 330, 262, 196].forEach((f, i) => setTimeout(() => tone(f, .3, 'sawtooth', .08), i * 160)),
+  boom: () => tone(90, .3, 'square', .12, .3)
+};
+
+/* ---------- D&D: classes, dice, session zero ---------- */
+const CLASSES = {
+  Fighter:   { hd: 10, atk: 'str', order: ['str', 'con', 'dex', 'wis', 'cha', 'int'], sp: 'Action Surge', cd: 18, desc: 'Action Surge: swing almost nonstop for 4 seconds.' },
+  Barbarian: { hd: 12, atk: 'str', order: ['str', 'con', 'dex', 'wis', 'cha', 'int'], sp: 'Rage', cd: 16, desc: 'Rage: +2 damage and shrug off half of all hits for 5 seconds.' },
+  Rogue:     { hd: 8, atk: 'dex', order: ['dex', 'int', 'cha', 'con', 'wis', 'str'], sp: 'Cunning Dash', cd: 6, desc: 'Cunning Dash: dash forward unhurt. Your next hit is a sneak attack crit.' },
+  Wizard:    { hd: 6, atk: 'int', order: ['int', 'con', 'dex', 'wis', 'cha', 'str'], sp: 'Fireball', cd: 9, desc: 'Fireball: blast a wide area ahead of you for 3 damage.' },
+  Cleric:    { hd: 8, atk: 'wis', order: ['wis', 'con', 'str', 'cha', 'dex', 'int'], sp: 'Healing Word', cd: 10, desc: 'Healing Word: heal an ally (or yourself) for 3 HP and lift the fallen.' },
+  Bard:      { hd: 8, atk: 'cha', order: ['cha', 'dex', 'con', 'int', 'wis', 'str'], sp: 'Vicious Mockery', cd: 12, desc: 'Vicious Mockery: stun nearby enemies and inspire allies (+1 damage).' }
+};
+const CLS = Object.keys(CLASSES);
+const STATN = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
+const ARMOR = { goblin: 8, skeleton: 9, slime: 7, mimic: 10, dragon: 13, beholder: 14, pivot: 9 };
+const CHAPTERS = [
+  { name: 'The Tavern Is Quite Normal', read: 'You meet in a perfectly ordinary tavern. A hooded stranger slides a map across the table. The map is correctly labelled.' },
+  { name: 'The Road to Reasonable', read: 'The road bends, as roads do. This one bends slightly more than the map suggested, and the map has gone quiet.' },
+  { name: 'The Goblin Union', read: 'Goblins block the path, holding small signs. The signs are well made. The goblins are not open to negotiation.' },
+  { name: 'The Dungeon of Mild Inconvenience', read: 'The door is unlocked. The hallway is lit. Everything is a little too convenient, and that should worry you.' },
+  { name: "The Dragon's Tax Audit", read: 'A dragon sits upon a hoard of receipts. It has questions about your thingamajigs.' },
+  { name: 'The Beholder Reads Reviews', read: 'A beholder floats in, holding a printout of one-star reviews. It has only one eye, and it is on you.' },
+  { name: 'The Final Encounter With Sense', read: 'At the end of the road stands a small, tired figure. It is Sense. It has been waiting. It would like a word.' }
+];
+const DM_ASIDES = ['The DM stops reading and looks nervously at the screen.', 'The DM has lost their place and invented a new paragraph.', 'The DM rolled behind the screen, and the screen rolled back.'];
+let ZERO = null;
+const mod = v => Math.floor((v - 10) / 2);
+function roll4d6() { const r = [ri(1, 6), ri(1, 6), ri(1, 6), ri(1, 6)].sort((a, b) => a - b); return r[1] + r[2] + r[3]; }
+function rollVals() { return STATN.map(roll4d6).sort((a, b) => b - a); }
+function assign(cls, vals) { const st = {}; CLASSES[cls].order.forEach((k, i) => { st[k] = vals[i]; }); return st; }
+function newChar(cls) { const c = { cls: cls || pick(CLS), vals: rollVals(), rerolls: 2 }; c.stats = assign(c.cls, c.vals); return c; }
+function profB() { return 2 + Math.floor((G.level - 1) / 2); }
+function atkMod(p) { return mod(p.st[CLASSES[p.cls].atk]); }
+function float(x, y, str, col) { (D.texts = D.texts || []).push({ x, y, s: str, col, life: 1.2 }); }
+function rollAtk(p, e) {
+  const d = ri(1, 20), total = d + atkMod(p) + profB();
+  D.lastRoll = { d, at: T };
+  if (d === 1) { lg('fumble'); return { hit: false, fumble: true, txt: 'NAT 1!' }; }
+  const sneak = p.buff.sneak > 0;
+  if (sneak) p.buff.sneak = 0;
+  const crit = d === 20 || sneak;
+  if (!crit && !D.tut && total < ARMOR[e.type] - (e.small ? 2 : 0)) return { hit: false, txt: `${d}+${total - d} MISS` };
+  if (crit) lg('crit');
+  const base = 1 + Math.min(2, Math.max(0, atkMod(p))) + G.upg.dmg + (p.buff.rage > 0 ? 2 : 0) + (p.buff.insp > 0 ? 1 : 0);
+  return { hit: true, crit, dmg: base * (crit ? 2 : 1), txt: sneak ? 'SNEAK ATTACK!' : crit ? 'NAT 20! CRIT' : `${total} HIT` };
+}
+function useSpecial(p) {
+  const sp = CLASSES[p.cls].sp;
+  const heal = (q, n) => { if (q.down) { q.down = false; q.hp = 1; q.inv = 1.5; q.rev = 0; } q.hp = Math.min(q.mx, q.hp + n); burst(q.x, q.y, 120, 10); };
+  switch (sp) {
+    case 'Action Surge': p.buff.surge = 4; float(p.x, p.y - 30, 'ACTION SURGE', '#ffe14d'); break;
+    case 'Rage': p.buff.rage = 5; float(p.x, p.y - 30, 'RAGE!', '#ff6b6b'); break;
+    case 'Cunning Dash': p.vx = p.face.x * 1100; p.vy = p.face.y * 1100; p.inv = Math.max(p.inv, .4); p.buff.sneak = 3; float(p.x, p.y - 30, 'DASH', '#9dffb0'); break;
+    case 'Fireball': {
+      const fx = p.x + p.face.x * 120, fy = p.y + p.face.y * 120;
+      D.fx.push({ type: 'boom', x: fx, y: fy, t: 0 }); D.shake = 8; sfx.boom(); burst(fx, fy, 20, 30);
+      for (const e of D.enemies) if (!e.dead && dist(e, { x: fx, y: fy }) < 95) { e.hp -= 3; e.hit = .15; e.dorm = false; if (e.hp <= 0) killEnemy(e); }
+      float(fx, fy - 40, 'FIREBALL', '#ff8a1a'); break; }
+    case 'Healing Word': {
+      let tgt = null, best = 1e9;
+      for (const q of D.players) { if (q === p || dist(p, q) > 170) continue; const sc = q.down ? -1 : q.hp / q.mx; if (sc < best) { best = sc; tgt = q; } }
+      if (!tgt || (!tgt.down && tgt.hp >= tgt.mx && p.hp < p.mx)) tgt = p;
+      heal(tgt, 3); float(tgt.x, tgt.y - 30, '+3 HP', '#7dff6b'); break; }
+    case 'Vicious Mockery':
+      for (const e of D.enemies) if (!e.dead && dist(e, p) < 120) { e.stun = 2; e.dorm = false; }
+      for (const q of D.players) if (!q.down) q.buff.insp = 6;
+      float(p.x, p.y - 30, 'VICIOUS MOCKERY', '#ff9de6'); break;
+  }
+  p.spCd = CLASSES[p.cls].cd;
+}
+function zClass(i, dir) { const c = G.chars[i]; if (ZERO.ready[i]) return; c.cls = CLS[(CLS.indexOf(c.cls) + dir + CLS.length) % CLS.length]; c.stats = assign(c.cls, c.vals); sfx.pick(); }
+function zReroll(i) { const c = G.chars[i]; if (ZERO.ready[i] || c.rerolls <= 0) return; c.rerolls--; c.vals = rollVals(); c.stats = assign(c.cls, c.vals); sfx.hit(); }
+function beginCampaign() { if (ZERO.skip) startWorld(); else startTutorial(); }
+function updateZero() {
+  if (pressed.has('Escape')) { G.scene = 'title'; return; }
+  if (pressed.has('KeyC')) { openKM(); return; }
+  for (let i = 0; i < 2; i++) {
+    if (G.mode === 1 && i === 1) continue;
+    const c = CTRL[i];
+    if (ZERO.ready[i]) { if (pressed.has(c.s)) ZERO.ready[i] = false; continue; }
+    if (pressed.has(c.l)) zClass(i, -1);
+    if (pressed.has(c.r)) zClass(i, 1);
+    if (pressed.has(c.a)) zReroll(i);
+    if (pressed.has(c.s)) { ZERO.ready[i] = true; sfx.plot(); }
+  }
+  if (ZERO.ready[0] && ZERO.ready[1]) beginCampaign();
+}
+const ZX = i => 40 + i * 470;
+const ZB = (i, k) => { const x0 = ZX(i); return ({ prev: { x: x0 + 20, y: 150, w: 44, h: 44 }, next: { x: x0 + 366, y: 150, w: 44, h: 44 }, reroll: { x: x0 + 20, y: 452, w: 190, h: 44 }, ready: { x: x0 + 220, y: 452, w: 190, h: 44 } })[k]; };
+function zeroClick(x, y) {
+  for (let i = 0; i < 2; i++) {
+    if (G.mode === 1 && i === 1) continue;
+    if (hit(ZB(i, 'prev'), x, y)) zClass(i, -1);
+    else if (hit(ZB(i, 'next'), x, y)) zClass(i, 1);
+    else if (hit(ZB(i, 'reroll'), x, y)) zReroll(i);
+    else if (hit(ZB(i, 'ready'), x, y)) { ZERO.ready[i] = !ZERO.ready[i]; if (ZERO.ready[i]) sfx.plot(); }
+  }
+}
+
+/* ---------- entity factories ---------- */
+function maxHp() { return 5 + G.upg.hp; }
+function mkPlayer(i) {
+  const c = G.chars[i], mx = calcMx(c.cls, c.stats);
+  return { id: i, x: W / 2 + (i ? 70 : -70), y: H / 2 + 60, vx: 0, vy: 0, hp: mx, mx, cls: c.cls, st: c.stats, buff: {}, spCd: 0, face: { x: 0, y: 1 },
+    cd: 0, swing: 0, inv: 0, down: false, rev: 0, burn: 0, invertT: 0, stun: 0, hue: i ? 190 : 322, ai: false };
+}
+function mkIntern() { return { x: W / 2, y: H / 2 + 110, say: '', sayT: 0, chat: 2.5, thr: 2, rev: 0, step: 0 }; }
+function mkPend(life) {
+  return { type: 'pend', px: rnd(240, W - 240), py: -20, len: rnd(300, 400), amp: rnd(.7, 1.05), ph: rnd(0, 6.28),
+    speed: (1.3 + .17 * G.chaos) * (1 - .1 * G.upg.pend), r: 26, life: life || 0 };
+}
+function mkSun() {
+  return { type: 'sun', cx: W / 2, cy: H / 2 + 10, ax: rnd(230, 340), ay: rnd(120, 190), fx: rnd(.35, .6), fy: rnd(.4, .7), ph: rnd(0, 6.28), r: 72 };
+}
+function pendPos(h) {
+  if (h.spin) { const a = D.t * h.speed + h.ph, Ln = h.len * (.45 + .55 * (.5 + .5 * Math.sin(D.t * 1.7 + h.ph))); return { x: h.px + Math.cos(a) * Ln, y: h.py + Math.sin(a) * Ln }; }
+  const a = h.amp * Math.sin(D.t * h.speed + h.ph);
+  return { x: h.px + Math.sin(a) * h.len, y: h.py + Math.cos(a) * h.len };
+}
+function sunPos(h) { return { x: h.cx + Math.sin(D.t * h.fx + h.ph) * h.ax, y: h.cy + Math.cos(D.t * h.fy + h.ph * 1.7) * h.ay }; }
+
+/* ---------- game flow ---------- */
+function newGame(mode, skip) {
+  Object.assign(G, { scene: 'play', mode, day: 1, chaos: 0, sense: 50, thing: 3, story: [], sum: null,
+    upg: { dmg: 0, spd: 0, hp: 0, shade: 0, pend: 0, coffee: 0 }, stats: { wins: 0, fails: 0, kills: 0 }, level: 1, xp: 0 });
+  try { speechSynthesis.cancel(); } catch (e) {}
+  paused = false;
+  G.chars = [newChar(), newChar()];
+  ZERO = { skip, ready: [false, mode === 1] };
+  G.scene = 'zero';
+}
+const TUT = [
+  { reb: 0, title: 'Step 1: Walk', text: () => `Welcome, adventurers. This is Orientation, and everything in it is perfectly reasonable. Please walk around a little. Sir Quibble uses ${ctlStr(0).split(' + ')[0]}. Dame Grimsby uses ${ctlStr(1).split(' + ')[0]}. (Rebind keys any time from the pause menu.)`,
+    aside: 'Walking is the oldest and most reasonable form of travel.', done: () => tutMoved() },
+  { reb: 0, title: 'Step 2: Swing', enter: () => { D.enemies.push({ type: 'goblin', x: W / 2, y: H / 2 - 30, hp: 4, maxhp: 4, r: 12, cd: 99, hit: 0, hcd: 0, dorm: false, hue: 120, wob: 0, kx: 0, ky: 0, small: false, dummy: true }); },
+    text: () => `Please swing at the practice goblin. He has agreed to this. Swing: ${kn(CTRL[0].a)} (Sir Quibble), ${kn(CTRL[1].a)} (Dame Grimsby). Class specials: ${kn(CTRL[0].s)} and ${kn(CTRL[1].s)}.`,
+    aside: 'He signed a waiver. It was very short.', done: () => !D.enemies.some(e => e.dummy) },
+  { reb: 1, title: 'Step 3: Thingamajigs', enter: () => { for (let i = 0; i < 2; i++) D.items.push({ x: rnd(150, W - 150), y: rnd(150, H - 150), vx: 0, vy: 0, life: 999, hue: ri(0, 359), val: 1 }); },
+    text: 'Defeated monsters drop thingamajigs, our currency. Walk over them to collect. Pip, our intern, will help.',
+    aside: 'Pip has already collected three that were not his.', done: () => D.items.length === 0 },
+  { reb: 2, title: 'Step 4: Plot', enter: () => { D.plots.push({ x: rnd(120, W - 120), y: rnd(140, H - 160), t: 0 }); D.spawnedPlots = 1; },
+    text: 'Each day you must collect plot points. This keeps the story coherent.',
+    aside: 'Coherent is a strong word. We are using it lightly.', done: () => D.got >= 1 },
+  { reb: 3, title: 'Step 5: Sunshine', enter: () => { D.haz.push(mkSun()); },
+    text: 'Hazards exist. The sunbeam is warm but fair. Please stay out of it for eight seconds.',
+    aside: 'The sun was not in the script. The sun has been told.', done: () => D.tut.st >= 8 },
+  { reb: 4, title: 'Step 6: Pendulum', enter: () => { D.haz.push(mkPend()); },
+    text: 'This pendulum is purely decorative. Please admire it from a distance for eight seconds.',
+    aside: 'It is not decorative.', ad: 3, done: () => D.tut.st >= 8 },
+  { reb: 6, title: 'Step 7: Graduation', enter: () => tutFinale(),
+    text: 'Congratulations! You are fully trained. Please proceed calmly into the open world.',
+    aside: 'ORIENTATION HAS GONE ROGUE. THE DM RECOMMENDS RUNNING.', ad: 1.5, done: () => D.tut.st >= 11 }
+];
+function tutMoved() {
+  return D.players.every((p, i) => p.ai || D.tut.moved[i] >= 220);
+}
+function tutFinale() {
+  ['goblin', 'skeleton', 'slime', 'mimic'].forEach(t => spawnEnemy(t));
+  D.haz.push(mkPend()); D.haz.push(mkPend());
+  D.drift = { x: 100, y: -80 }; D.driftT = 6;
+  const h = D.players.find(p => !p.ai); if (h) h.invertT = 6;
+  for (let i = 0; i < 4; i++) D.fx.push({ type: 'cheese', x: rnd(60, W - 60), y: rnd(100, H - 70), t: 0 });
+  banner('THE ORIENTATION IS REBELLING', 3);
+}
+function startTutorial() {
+  D = { t: 0, intro: 2.6, need: 1, got: 0, spawnedPlots: 0, plotCool: 0, timeLeft: 999,
+    players: [mkPlayer(0), mkPlayer(1)], enemies: [], items: [], plots: [], shots: [], haz: [], parts: [], fx: [],
+    spawnT: 99, evT: 99, drift: null, driftT: 0, banner: null, kills: {}, log: {}, earned: 0,
+    over: false, overT: 0, res: null, cause: '', buttonT: 99, shake: 0, bw: W, bh: H, mt: 62, mb: 52, cx: 0, cy: 0, cam: { x: 0, y: 0 } };
+  if (G.mode === 1) D.players[1].ai = true;
+  D.intern = mkIntern();
+  D.tut = { step: 0, reb: 0, st: 0, delay: 0, moved: [0, 0], last: [null, null] };
+  G.scene = 'play';
+  tutEnter(0);
+}
+function tutEnter(i) {
+  if (i >= TUT.length) { startWorld(); return; }
+  const t = D.tut; t.step = i; t.st = 0; t.reb = TUT[i].reb;
+  D.players.forEach(p => { p.hp = p.mx; p.down = false; });
+  if (TUT[i].enter) TUT[i].enter();
+  banner(TUT[i].title, 2);
+}
+function updTut(dt) {
+  const t = D.tut;
+  t.st += dt;
+  D.players.forEach((p, i) => {
+    if (t.last[i]) t.moved[i] += Math.hypot(p.x - t.last[i].x, p.y - t.last[i].y);
+    t.last[i] = { x: p.x, y: p.y };
+    if (p.down) { p.down = false; p.hp = 1; }
+  });
+  if (t.delay > 0) { t.delay -= dt; if (t.delay <= 0) tutEnter(t.step + 1); return; }
+  const s = TUT[t.step];
+  if (s && s.done()) { sfx.plot(); banner(t.step === TUT.length - 1 ? 'ORIENTATION OVER' : 'STEP COMPLETE', 1.4); t.delay = 1.2; }
+}
+function updatePause() {
+  if (pressed.has('KeyR')) restartRound();
+  else if (pressed.has('KeyC')) openKM();
+  else if (pressed.has('KeyQ')) quitToTitle();
+}
+function restartRound() { paused = false; if (D && D.tut) startTutorial(); else if (D && D.world) recall(); else startDay(); }
+function quitToTitle() { paused = false; G.scene = 'title'; D = null; try { speechSynthesis.cancel(); } catch (e) {} }
+/* ---------- open world ---------- */
+const WW = 3000, WH = 2000, DAYLEN = 110, VIL = { x: 1500, y: 1000 };
+const REG = [["Beholder's Review Board", 'Whisperwood', "The Dragon's Tax Office"], ['Cragpeak Hills', 'The Reasonable Plains', 'Sundial Flats'], ['Lost Furniture Fields', 'Mildewmarsh', 'Pendulum Heights']];
+const REGHUE = [[290, 120, 15], [30, 95, 48], [200, 165, 250]];
+const REGPOOL = [
+  [['goblin', 'beholder', 'goblin'], ['goblin', 'skeleton', 'mimic'], ['skeleton', 'dragon', 'skeleton']],
+  [['goblin', 'mimic', 'skeleton'], ['goblin', 'goblin', 'skeleton'], ['skeleton', 'mimic', 'slime']],
+  [['mimic', 'slime', 'goblin'], ['slime', 'slime', 'goblin'], ['skeleton', 'dragon', 'mimic']]
+];
+const ANOM = ['upside-down tree', 'floating chair', 'sign pointing at itself', 'clock with 13 hours', 'sandwich throne'];
+const TIERLINES = ['THE DM STOPS READING AND LOOKS NERVOUSLY AT THE SCREEN.', 'THE DM HAS LOST THEIR PLACE.', 'THE DM ROLLED BEHIND THE SCREEN, AND THE SCREEN ROLLED BACK.', 'THE DM DECIDES TO IGNORE THEIR NOTES.', 'THE MAP IS NOW A SUGGESTION.'];
+const LVX = [0, 30, 80, 150, 250, 380, 540, 740];
+const QUESTS = [
+  { name: 'The Goblin Union', type: 'slay', mob: 'goblin', n: 6, short: 'Goblins defeated',
+    hint: 'Defeat six goblins. They are loitering east of the village, on the plains.',
+    read: 'Goblins have formed a union on the village outskirts, and they are holding small, well-made signs. They are not open to negotiation. Mayor Brenna would like six of them dealt with.',
+    done: 'broke the picket line and was only mildly sued.' },
+  { name: 'The Missing Plot', type: 'clues', cell: [1, 0], n: 3, short: 'Clues found',
+    hint: 'Find three clues in Whisperwood, the forest north of the village.',
+    read: 'The plot has gone missing. Witnesses saw it heading north into Whisperwood, wearing a hat. Find three clues in the forest, and bring the news back to the Mayor.',
+    done: 'followed three clues through Whisperwood and found the plot hiding behind a tree.' },
+  { name: 'Mildewmarsh Mishap', type: 'fix', n: 3, short: 'Unreasonable things fixed',
+    hint: 'Fix three unreasonable things anywhere in the world. Swing at them until they behave.',
+    read: 'Things around the world have started to be wrong in small ways. A tree is upside down. A chair is floating. Fix three of them by hitting them until they stop. The magenta dots on your map are a good start.',
+    done: 'fixed three unreasonable things by hitting them until they behaved.' },
+  { name: 'The Dungeon of Mild Inconvenience', type: 'clues', cell: [0, 1], n: 3, short: 'Clues found',
+    hint: 'Find three clues in Cragpeak Hills, west of the village.',
+    read: 'The door of the dungeon is unlocked. The hallway is lit. Everything is a little too convenient, and that should worry you. Search the Cragpeak Hills for three clues.',
+    done: 'searched the Cragpeak Hills and wondered why everything was so convenient.' },
+  { name: "The Dragon's Tax Audit", type: 'slay', mob: 'dragon', n: 1, lair: { x: 2500, y: 330 }, short: 'Dragon defeated',
+    hint: "Defeat the dragon in The Dragon's Tax Office, far to the north-east.",
+    read: 'A dragon sits upon a hoard of receipts in the far north-east. It has questions about your thingamajigs. It would like to see your paperwork. It will not accept a smile.',
+    done: 'survived the dragon tax audit by hitting the auditor very hard.' },
+  { name: 'The Beholder Reads Reviews', type: 'slay', mob: 'beholder', n: 1, lair: { x: 500, y: 330 }, short: 'Beholder defeated',
+    hint: "Defeat the beholder in the Beholder's Review Board, far to the north-west.",
+    read: 'A beholder floats in the far north-west, holding a printout of one-star reviews. It has only one eye, and it is on you. Do not let it finish reading.',
+    done: 'silenced the beholder before it could read the second page of reviews.' },
+  { name: 'The Final Encounter With Sense', type: 'boss', short: 'Strike the pivot', 
+    hint: 'Travel to Pendulum Heights in the far south-east and stop the Vengeful Pendulum by striking its pivot.',
+    read: 'At the far south-east stands the Vengeful Pendulum, swinging with a patience that is almost rude. Its pivot is exposed, and it has been waiting for someone to hit it. Dodge the bob. Strike the pivot.',
+    done: 'struck the pivot, and the Vengeful Pendulum finally stopped.' }
+];
+function regionAt(x, y) { const c = clamp(Math.floor(x / (WW / 3)), 0, 2), r = clamp(Math.floor(y / (WH / 3)), 0, 2); return { c, r, name: REG[r][c] }; }
+function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const OBS = [];
+(function genWorld() {
+  const R = mulberry(20261021), rr = (a, b) => a + R() * (b - a);
+  const add = (x, y, r, k, solid, hue) => OBS.push({ x, y, r, k, solid, hue: hue || 0, ph: R() * 6.28 });
+  for (let i = 0; i < 7; i++) { const a = i / 7 * 6.283 + .3; add(VIL.x + Math.cos(a) * 215, VIL.y + Math.sin(a) * 190, 40, 'house', true, i * 40); }
+  add(VIL.x, VIL.y + 12, 30, 'fountain', true, 0);
+  const place = (n, c, r, k, rad, solid) => {
+    for (let i = 0; i < n; i++) {
+      for (let tries = 0; tries < 10; tries++) {
+        const x = rr(c * WW / 3 + 60, (c + 1) * WW / 3 - 60), y = rr(r * WH / 3 + 60, (r + 1) * WH / 3 - 60);
+        if (Math.hypot(x - VIL.x, y - VIL.y) < 330) continue;
+        add(x, y, rr(rad[0], rad[1]), k, solid, R() * 60); break;
+      }
+    }
+  };
+  place(70, 1, 0, 'tree', [22, 32], true); place(28, 0, 0, 'rock', [20, 34], true); place(28, 2, 0, 'rock', [18, 30], true);
+  place(45, 0, 1, 'rock', [24, 40], true); place(26, 1, 1, 'tree', [22, 30], true); place(34, 2, 1, 'cactus', [14, 18], true);
+  place(30, 0, 2, 'chair', [16, 22], true); place(50, 1, 2, 'reed', [10, 14], false); place(20, 2, 2, 'rock', [22, 36], true);
+}());
+const INN = OBS[1];
+INN.k = 'inn';
+function pushOut(o, r) {
+  for (const b of OBS) {
+    if (!b.solid) continue;
+    const dx = o.x - b.x, dy = o.y - b.y, rr = b.r + r;
+    if (dx > rr || dx < -rr || dy > rr || dy < -rr) continue;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d < rr) { o.x = b.x + dx / d * rr; o.y = b.y + dy / d * rr; }
+  }
+}
+function partyMid() {
+  const al = D.players.filter(p => !p.down), a = al.length ? al : D.players;
+  return { x: a.reduce((s2, p) => s2 + p.x, 0) / a.length, y: a.reduce((s2, p) => s2 + p.y, 0) / a.length };
+}
+function newDS() { return { kills: {}, fixed: 0, wipes: 0 }; }
+function showCard(sub, title, text, foot) { D.cards.push({ sub, title, text, foot, t: 0 }); if (!D.card) D.card = D.cards.shift(); }
+function startWorld() {
+  D = { t: 0, intro: 0, need: 1, got: 0, spawnedPlots: 0, plotCool: 0, timeLeft: 9999,
+    players: [mkPlayer(0), mkPlayer(1)], enemies: [], items: [], plots: [], shots: [], haz: [], parts: [], fx: [], anoms: [],
+    spawnT: 4, evT: 25, drift: null, driftT: 0, banner: null, kills: {}, log: {}, earned: 0,
+    over: false, overT: 0, res: null, cause: '', buttonT: 40, shake: 0,
+    world: true, bw: WW, bh: WH, mt: 20, mb: 20, cx: 0, cy: 0, cam: { x: 0, y: 0 }, card: null, cards: [],
+    npcs: [{ kind: 'mayor', name: 'Mayor Brenna', x: VIL.x, y: VIL.y - 95 }, { kind: 'merch', name: 'Marlo the Merchant', x: VIL.x - 150, y: VIL.y + 55 }] };
+  D.players[0].x = VIL.x - 45; D.players[0].y = VIL.y - 30;
+  D.players[1].x = VIL.x + 45; D.players[1].y = VIL.y - 30;
+  if (G.mode === 1) D.players[1].ai = true;
+  D.intern = mkIntern(); D.intern.x = VIL.x; D.intern.y = VIL.y - 5;
+  D.mid = partyMid();
+  D.w = { unr: 4, clock: 0, day: 1, qi: 0, state: 'active', prog: 0, region: '', tier: 0, anomT: 40, pendT: 60, sunT: 20, spawnT: 45, metMayor: false, tip: 0, tipT: 0,
+    npcCd: { mayor: 0, merch: 0, inn: 0 }, ds: newDS(), endT: 0, finish: '' };
+  G.day = 1; G.chaos = 0; G.sense = 96; G.scene = 'play'; paused = false;
+  [[800, 520], [1500, 380], [2200, 560], [560, 1250], [2420, 1120], [900, 1560], [1700, 1640], [2280, 1500], [2700, 880]].forEach(([x, y]) => {
+    const h = mkPend(); h.px = x; h.py = y; h.len = rnd(240, 320); D.haz.push(h);
+  });
+  for (let i = 0; i < 6; i++) { const g = spawnEnemy('goblin', VIL.x + 680 + rnd(-130, 130), VIL.y + 80 + rnd(-130, 130), true); g.keep = true; }
+  for (let i = 0; i < 3; i++) { const a = rnd(0, 6.28), r = rnd(950, 1300); spawnEnemy('goblin', clamp(VIL.x + Math.cos(a) * r, 60, WW - 60), clamp(VIL.y + Math.sin(a) * r * .7, 60, WH - 60), true); }
+  updCam(10);
+  showCard('THE WORLD', 'The Reasonable Village', 'The orientation is over, and the world is wide open. You stand in the village square, and everything is perfectly reasonable today. The DM would like to point out that the word "today" is doing a great deal of work in that sentence. Mayor Brenna is waiting just north of you, and she has been rehearsing a speech.', 'Walk up to the Mayor to begin. You have seven days.');
+  startQuest(0, true);
+}
+function curQ() { return QUESTS[D.w.qi]; }
+function startQuest(i, silent) {
+  const q = QUESTS[i], w = D.w;
+  w.qi = i; w.state = 'active'; w.prog = 0; D.got = 0; D.need = q.n || 1;
+  if (q.type === 'clues') {
+    for (let k = 0; k < q.n; k++) D.plots.push({ x: rnd(q.cell[0] * WW / 3 + 150, (q.cell[0] + 1) * WW / 3 - 150), y: rnd(q.cell[1] * WH / 3 + 150, (q.cell[1] + 1) * WH / 3 - 150), t: 0 });
+  }
+  if (q.lair) { const e = spawnEnemy(q.mob, q.lair.x, q.lair.y, true); e.keep = true; e.aggro = true; e.hp += 2; }
+  if (q.type === 'boss') {
+    const bx = 2500, by = 1620, pv = spawnEnemy('pivot', bx, by, true);
+    pv.keep = true; pv.dummy = true; pv.maxhp = pv.hp;
+    const h = mkPend(); Object.assign(h, { px: bx, py: by, len: 300, spin: true, r: 36, speed: 1.8 }); D.haz.push(h);
+    D.boss = { x: bx, y: by };
+  }
+  if (!silent) showCard(`CHAPTER ${i + 1} OF ${QUESTS.length}`, q.name, q.read, q.hint);
+}
+function checkQuest() {
+  const w = D.w, q = curQ();
+  if (w.state !== 'active' || q.type === 'boss') return;
+  if (w.prog >= q.n) { w.state = 'turnin'; sfx.win(); banner('OBJECTIVE COMPLETE: RETURN TO MAYOR BRENNA', 3.2); say(pick(INTERN.win), 2.6); }
+}
+function qAdd(type, extra) {
+  const w = D.w;
+  if (!w || w.state !== 'active') return;
+  const q = curQ();
+  if (q.type !== type || (type === 'slay' && q.mob !== extra)) return;
+  w.prog++; D.got = w.prog; checkQuest();
+}
+function turnIn() {
+  const w = D.w, q = curQ(), n = w.qi + 1, rew = 8 + n * 3;
+  G.thing += rew; gainXP(40 + n * 6); w.unr = Math.max(0, w.unr - 8); G.stats.wins++;
+  G.story.push({ text: `Chapter ${n}, ${q.name}: ${A_NAME} the ${G.chars[0].cls} and ${B_NAME} the ${G.chars[1].cls} ${q.done}`, chaos: G.chaos, win: true });
+  sfx.win(); float(D.npcs[0].x, D.npcs[0].y - 60, `+${rew} thingamajigs`, '#ffe14d');
+  if (w.qi + 1 < QUESTS.length) startQuest(w.qi + 1);
+}
+function bossDown() {
+  const w = D.w;
+  w.finish = 'boss'; w.endT = 3.5; G.stats.wins++;
+  G.story.push({ text: `Chapter 7, ${QUESTS[6].name}: ${A_NAME} the ${G.chars[0].cls} and ${B_NAME} the ${G.chars[1].cls} ${QUESTS[6].done}`, chaos: 0, win: true });
+  D.haz = D.haz.filter(h => !h.spin);
+  banner('THE PENDULUM STOPS.', 3.5); D.shake = 14; sfx.win();
+}
+function calcMx(cls, st) { return clamp(3 + Math.ceil(CLASSES[cls].hd / 4) + mod(st.con) + G.upg.hp + Math.floor((G.level - 1) * .6), 4, 14); }
+function applyLevel(p) { const nm = calcMx(p.cls, p.st); p.hp = Math.min(nm, p.hp + Math.max(0, nm - p.mx)); p.mx = nm; }
+function gainXP(n) {
+  G.xp += n;
+  let lv = 1;
+  for (let i = 0; i < LVX.length; i++) if (G.xp >= LVX[i]) lv = i + 1;
+  if (lv > G.level) { G.level = lv; D.players.forEach(q => { applyLevel(q); if (!q.down) q.hp = Math.min(q.mx, q.hp + 2); }); banner(`LEVEL UP! LEVEL ${lv}`, 2.6); sfx.win(); }
+}
+function chaDisc() { return Math.max(0, ...G.chars.map(c => mod(c.stats.cha))); }
+function spawnAnomaly() {
+  const m = D.mid;
+  for (let k = 0; k < 12; k++) {
+    const a = rnd(0, 6.28), r = rnd(500, 1100), x = clamp(m.x + Math.cos(a) * r, 80, WW - 80), y = clamp(m.y + Math.sin(a) * r, 80, WH - 80);
+    if (dist({ x, y }, VIL) < 280) continue;
+    D.anoms.push({ x, y, hp: 3, kind: pick(ANOM), hue: ri(0, 359), hit: 0 });
+    return;
+  }
+}
+function fixAnomaly(a) {
+  const w = D.w;
+  G.thing += 2; D.earned += 2; gainXP(10); w.unr = Math.max(0, w.unr - 4); w.ds.fixed++;
+  float(a.x, a.y - 44, 'FIXED. REASONABLE AGAIN.', '#7dff6b'); burst(a.x, a.y, 120, 20); sfx.plot();
+  qAdd('fix');
+}
+function wipe() {
+  const w = D.w;
+  G.stats.fails++; w.ds.wipes++; w.unr = Math.min(100, w.unr + 8); G.thing = Math.floor(G.thing * .75);
+  G.story.push({ text: `On day ${w.day}, ${A_NAME} and ${B_NAME} were both knocked flat. They woke in the village inn, and everyone pretended it had not happened.`, chaos: G.chaos, win: false });
+  D.players.forEach((q, i) => { q.down = false; q.hp = q.mx; q.inv = 2; q.x = VIL.x + (i ? 50 : -50); q.y = VIL.y + 140; q.vx = 0; q.vy = 0; });
+  D.intern.x = VIL.x; D.intern.y = VIL.y + 175;
+  D.enemies = D.enemies.filter(e => e.keep || e.dummy); D.shots = [];
+  updCam(10); sfx.fail();
+  showCard('PARTY WIPE', 'Everyone Is On The Floor', 'You wake in the village inn. Nobody mentions the floor. The innkeeper adds a small fee to your bill, and the world drifts a little further from sense.', 'Unreasonableness +8. You lost a quarter of your thingamajigs.');
+}
+function recall() {
+  paused = false;
+  D.players.forEach((q, i) => { q.x = VIL.x + (i ? 50 : -50); q.y = VIL.y + 140; q.vx = 0; q.vy = 0; });
+  D.intern.x = VIL.x; D.intern.y = VIL.y + 175; D.shots = [];
+  updCam(10); banner('RECALLED TO THE VILLAGE', 1.8);
+}
+function dayEnd() {
+  const w = D.w, ds = w.ds, ch = G.chaos, kt = killText(ds.kills), fx = ds.fixed;
+  const things = `${fx} unreasonable thing${fx === 1 ? '' : 's'}`;
+  let main = pick([
+    `Day ${w.day}. ${A_NAME} the ${G.chars[0].cls} and ${B_NAME} the ${G.chars[1].cls} ${kt === 'nobody at all' ? 'wandered, mostly' : 'dealt with ' + kt}, and fixed ${things}.`,
+    `On day ${w.day}, the party met ${kt}, fixed ${things}, and Pip wrote it all down in crayon.`
+  ]);
+  const ks = Object.keys(D.log).filter(k => ANEC[k]);
+  if (ks.length) main += ' ' + ANEC[pick(ks)]();
+  if (ch >= 2) main += ' ' + pick(ABS1);
+  if (ch >= 4) main += ' ' + pick(ABS2);
+  G.story.push({ text: main, chaos: ch, win: true });
+  w.ds = newDS(); D.log = {};
+}
+function finishCampaign(kind) {
+  dayEnd();
+  const w = D.w;
+  G.sense = clamp(100 - w.unr, 0, 100);
+  const line = { boss: 'At last, the Vengeful Pendulum was stopped. It hung there, mid-swing, looking embarrassed, and the whole world made sense for exactly one breath.',
+    timeout: 'The week ended with the world still unreasonable. It was, to be fair, extremely committed.',
+    collapse: 'The world reached one hundred percent unreasonable and simply carried on, looking relaxed.' }[kind];
+  G.story.push({ text: line, chaos: kind === 'boss' ? 0 : G.chaos, win: kind === 'boss' });
+  startEnding();
+}
+const ZOOM = .8, VW = W / ZOOM, VH = H / ZOOM, PW = 480, PWW = PW / ZOOM, SPLIT_ON = [800, 420], SPLIT_OFF = [700, 360], LEASH = [1500, 1000];
+function updCam(dt) {
+  const m = partyMid(), k = 1 - Math.pow(.0005, dt), P = D.players;
+  const ddx = Math.abs(P[0].x - P[1].x), ddy = Math.abs(P[0].y - P[1].y);
+  const was = D.split;
+  if (!D.split && (ddx > SPLIT_ON[0] || ddy > SPLIT_ON[1])) D.split = true;
+  else if (D.split && ddx < SPLIT_OFF[0] && ddy < SPLIT_OFF[1]) D.split = false;
+  const tx = clamp(m.x - VW / 2, 0, D.bw - VW), ty = clamp(m.y - VH / 2 - 10, 0, D.bh - VH);
+  D.cam.x += (tx - D.cam.x) * k; D.cam.y += (ty - D.cam.y) * k; D.cx = D.cam.x; D.cy = D.cam.y;
+  if (D.split) {
+    const mid = { x: (P[0].x + P[1].x) / 2, y: (P[0].y + P[1].y) / 2 };
+    for (const q of P) { q.x = clamp(q.x, mid.x - LEASH[0] / 2, mid.x + LEASH[0] / 2); q.y = clamp(q.y, mid.y - LEASH[1] / 2, mid.y + LEASH[1] / 2); }
+    if (!D.pcam) D.pcam = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
+    P.forEach((q, i) => {
+      const c = D.pcam[i], px = clamp(q.x - PWW / 2, 0, D.bw - PWW), py = clamp(q.y - VH / 2 - 10, 0, D.bh - VH);
+      if (!was) { c.x = px; c.y = py; } else { c.x += (px - c.x) * k; c.y += (py - c.y) * k; }
+      q.x = clamp(q.x, c.x + 24, c.x + PWW - 24); q.y = clamp(q.y, c.y + 80, c.y + VH - 70);
+    });
+    if (!was) banner('SPLIT SCREEN: STAY WITHIN REASONABLE DISTANCE', 2.2);
+  } else {
+    for (const q of P) { q.x = clamp(q.x, D.cam.x + 28, D.cam.x + VW - 28); q.y = clamp(q.y, D.cam.y + 80, D.cam.y + VH - 70); }
+  }
+}
+function questTarget() {
+  const w = D.w, q = QUESTS[w.qi], m = D.mid;
+  if (w.state === 'turnin') return D.npcs[0];
+  const near = arr => { let b = null, bd = 1e9; for (const o of arr) { const d = dist(o, m); if (d < bd) { bd = d; b = o; } } return b; };
+  if (q.type === 'clues') return near(D.plots);
+  if (q.type === 'fix') return near(D.anoms);
+  if (q.type === 'slay') return near(D.enemies.filter(e => e.type === q.mob)) || q.lair || null;
+  if (q.type === 'boss') return D.boss || null;
+  return null;
+}
+function questLine() {
+  const w = D.w, q = QUESTS[w.qi];
+  if (w.state === 'turnin') return 'Return to Mayor Brenna in the village.';
+  if (q.type === 'boss') return q.short + ' of the Vengeful Pendulum, far south-east.';
+  return `${q.short}: ${w.prog} / ${q.n}`;
+}
+const TIPS = [
+  { t: () => 'Welcome! Walk up to Mayor Brenna (the glowing !) to get your first quest.', done: w => w.metMayor },
+  { t: () => `Follow the yellow arrow. ${kn(CTRL[0].a)} (P1) and ${kn(CTRL[1].a)} (P2) swing your weapon, ${kn(CTRL[0].s)} / ${kn(CTRL[1].s)} use your class special.`, done: (w, t) => t > 22 || G.stats.kills > 0 },
+  { t: () => 'The minimap (bottom right) shows your quest, clues, and pink unreasonable things. The meter in the corner is how unreasonable the world is. Keep it low.', done: (w, t) => t > 15 },
+  { t: () => 'Walk far apart and the screen splits in two. Walk back together and it joins again.', done: (w, t) => t > 10 },
+  { t: () => 'Marlo the Merchant (the $) sells upgrades for your thingamajigs. Pink things on the map can be hit until they behave.', done: (w, t) => t > 14 }
+];
+function updTips(dt) {
+  const w = D.w;
+  if (w.tip >= TIPS.length) return;
+  w.tipT += dt;
+  if (TIPS[w.tip].done(w, w.tipT)) { w.tip++; w.tipT = 0; }
+}
+function drawTip() {
+  const w = D.w;
+  if (w.tip >= TIPS.length || D.card || paused) return;
+  const ls = wrap(TIPS[w.tip].t(), 600, 13), h = ls.length * 18 + 22, y = H - 48 - h;
+  ctx.fillStyle = 'rgba(10,0,20,.86)'; ctx.strokeStyle = '#7dff6b'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(W / 2 - 322, y, 644, h, 8); ctx.fill(); ctx.stroke();
+  ls.forEach((l, i) => txt(l, W / 2, y + 22 + i * 18, 13, '#fff', 'center', BODY, INK, 0));
+}
+function aggroR() { return 260 + Math.min(170, G.chaos * 22 + D.w.day * 10); }
+function phaseName(ph) { return ph < .6 ? 'Day' : ph < .7 ? 'Dusk' : ph < .9 ? 'Night' : 'Dawn'; }
+function updWorld(dt) {
+  const w = D.w;
+  if (w.endT > 0) { w.endT -= dt; if (w.endT <= 0) finishCampaign(w.finish); return; }
+  w.clock += dt;
+  updTips(dt);
+  D.anoms.forEach(a => { a.hit = Math.max(0, a.hit - dt); });
+  if (w.clock >= 7 * DAYLEN) { finishCampaign('timeout'); return; }
+  const nd = 1 + Math.floor(w.clock / DAYLEN);
+  if (nd !== w.day) { dayEnd(); w.day = nd; G.day = nd; w.unr = Math.min(100, w.unr + 2); banner(`SESSION ${nd} OF 7`, 2.6); }
+  const ph = (w.clock % DAYLEN) / DAYLEN;
+  w.unr = clamp(w.unr + (.04 + .012 * w.day + D.anoms.length * .014) * dt, 0, 100);
+  if (w.unr >= 100) { finishCampaign('collapse'); return; }
+  G.chaos = Math.floor(w.unr / 11); G.sense = 100 - w.unr;
+  if (G.chaos > w.tier) { w.tier = G.chaos; banner(`UNREASONABLENESS ${G.chaos}: ${pick(TIERLINES)}`, 3.2); say(pick(INTERN.chaos), 3); }
+  else if (G.chaos < w.tier) w.tier = G.chaos;
+  const rn = dist(D.mid, VIL) < 260 ? 'Reasonable Village' : regionAt(D.mid.x, D.mid.y).name;
+  if (rn !== w.region) { w.region = rn; banner('ENTERING: ' + rn.toUpperCase(), 2.4); }
+  // villagers
+  for (const k in w.npcCd) w.npcCd[k] = Math.max(0, w.npcCd[k] - dt);
+  for (const n of D.npcs) {
+    const key = n.kind === 'mayor' ? 'mayor' : 'merch';
+    if (w.npcCd[key] > 0 || !D.players.some(q => !q.down && dist(q, n) < 38)) continue;
+    if (key === 'mayor') {
+      w.npcCd.mayor = 25;
+      if (!w.metMayor) { w.metMayor = true; showCard('CHAPTER 1 OF ' + QUESTS.length, QUESTS[0].name, QUESTS[0].read, QUESTS[0].hint); }
+      else if (w.state === 'turnin') turnIn();
+      else showCard('MAYOR BRENNA', QUESTS[w.qi].name, QUESTS[w.qi].hint, 'Follow the yellow arrow, and check the minimap.');
+    } else { w.npcCd.merch = 10; openShop(); return; }
+  }
+  if (w.npcCd.inn <= 0 && D.players.some(q => !q.down && dist(q, INN) < INN.r + 26)) {
+    w.npcCd.inn = 45; D.players.forEach(q => { q.down = false; q.hp = q.mx; }); w.unr = Math.max(0, w.unr - 1);
+    banner('THE INN: EVERYONE IS RESTED', 2.4); float(INN.x, INN.y - 60, 'RESTED', '#7dff6b'); sfx.pick();
+  }
+  // unreasonable things appear
+  w.anomT -= dt;
+  if (w.anomT <= 0) { w.anomT = Math.max(5, 20 - w.unr * .12 - w.day * 1.2); if (D.anoms.length < 9) spawnAnomaly(); }
+  // sunbeams roam by day
+  w.sunT -= dt;
+  if (w.sunT <= 0) {
+    w.sunT = 6;
+    const want = ph < .62 ? 1 + Math.floor(G.chaos / 3) : 0, have = D.haz.filter(h => h.type === 'sun').length;
+    if (have < want) { const sb = mkSun(); sb.cx = D.mid.x + rnd(-380, 380); sb.cy = D.mid.y + rnd(-240, 240); sb.ax = rnd(90, 170); sb.ay = rnd(70, 130); sb.life = 45; D.haz.push(sb); }
+  }
+  // wandering pendulums when the world gets weird
+  w.pendT -= dt;
+  if (w.pendT <= 0) {
+    w.pendT = Math.max(10, 38 - w.unr * .3);
+    if (w.unr > 22) { const h = mkPend(35); h.px = D.mid.x + rnd(-300, 300); h.py = D.mid.y - 300; h.len = rnd(260, 330); D.haz.push(h); banner('A PENDULUM ARRIVED. IT HAS OPINIONS.', 2.4); }
+  }
+  // monsters
+  w.spawnT -= dt;
+  if (w.spawnT <= 0) {
+    w.spawnT = Math.max(1.4, (5 - w.unr * .025 - w.day * .15) / (ph > .7 && ph < .92 ? 1.5 : 1));
+    const alive = D.enemies.filter(e => !e.dummy && !e.keep).length;
+    if (alive < (w.day < 2 ? 3 : 8) + Math.floor(w.unr / 8) && dist(D.mid, VIL) > 330) {
+      const rg = regionAt(D.mid.x, D.mid.y);
+      let type = pick(REGPOOL[rg.r][rg.c]);
+      if ((type === 'dragon' || type === 'beholder') && Math.random() > .22) type = 'skeleton';
+      spawnEnemy(type);
+    }
+  }
+  if (D.players.every(q => q.down)) wipe();
+}
+
+function startDay() {
+  const need = 3 + Math.floor((G.day - 1) / 2);
+  D = { t: 0, intro: 5.5, need, got: 0, spawnedPlots: 0, plotCool: .6, timeLeft: 25 + need * 6,
+    players: [mkPlayer(0), mkPlayer(1)], enemies: [], items: [], plots: [], shots: [], haz: [], parts: [], fx: [],
+    spawnT: 1.5, evT: rnd(6, 9), drift: null, driftT: 0, banner: null, kills: {}, log: {}, earned: 0,
+    over: false, overT: 0, res: null, cause: '', buttonT: rnd(12, 20), shake: 0, bw: W, bh: H, mt: 62, mb: 52, cx: 0, cy: 0, cam: { x: 0, y: 0 } };
+  if (G.mode === 1) D.players[1].ai = true;
+  D.intern = mkIntern();
+  D.introLine = G.chaos === 0 ? 'Stay out of the sun. Respect the pendulum.' : pick(['Stay out of the sun. Or in it. Nobody knows.', 'The pendulum has been thinking about you.', 'Please remain mostly reasonable.']);
+  D.readAloud = CHAPTERS[G.day - 1].read + (G.chaos >= 3 ? ' ' + pick(DM_ASIDES) : '');
+  const np = 1 + Math.floor(G.chaos / 2) + (G.day >= 4 ? 1 : 0);
+  for (let i = 0; i < np; i++) D.haz.push(mkPend());
+  const ns = 1 + (G.chaos >= 3 ? 1 : 0);
+  for (let i = 0; i < ns; i++) D.haz.push(mkSun());
+  for (let i = 0; i < 2 + Math.min(3, G.day); i++) spawnEnemy();
+  G.scene = 'play';
+}
+function lg(k) { D.log[k] = (D.log[k] || 0) + 1; }
+function banner(text, t) { D.banner = { text, t: t || 2.4 }; }
+function say(text, t) { D.intern.say = text; D.intern.sayT = t || 2.6; }
+
+function spawnEnemy(type, x, y, force) {
+  const cap = D.world ? 14 + Math.min(10, G.chaos * 2) : Math.min(20, 5 + G.day + G.chaos * 2);
+  if (!force && D.enemies.length >= cap) return null;
+  const tier = clamp(Math.max(G.day, 1 + G.chaos), 1, 6);
+  const pool = ENAMES.slice(0, tier);
+  if (!type) type = Math.random() < .35 ? pool[pool.length - 1] : pick(pool);
+  const t = ET[type];
+  if (x == null) {
+    if (D.world) {
+      for (let k = 0; k < 8; k++) {
+        const a = rnd(0, 6.28), r = rnd(660, 820), sp = pick(D.players);
+        x = clamp(sp.x + Math.cos(a) * r, 30, D.bw - 30); y = clamp(sp.y + Math.sin(a) * r, 30, D.bh - 30);
+        if (dist({ x, y }, VIL) > 260) break;
+      }
+    } else if (type === 'mimic') { x = rnd(80, W - 80); y = rnd(110, H - 90); }
+    else {
+      const s = ri(0, 3);
+      if (s === 0) { x = rnd(20, W - 20); y = 52; }
+      else if (s === 1) { x = rnd(20, W - 20); y = H - 48; }
+      else if (s === 2) { x = 16; y = rnd(70, H - 60); }
+      else { x = W - 16; y = rnd(70, H - 60); }
+    }
+  }
+  const ne = { type, x, y, hp: t.hp + (G.chaos >= 4 ? 1 : 0), r: t.r, cd: rnd(1, 2.5), hit: 0, hcd: 0,
+    dorm: type === 'mimic', hue: ri(0, 359), wob: rnd(0, 6), kx: 0, ky: 0, small: false };
+  D.enemies.push(ne);
+  return ne;
+}
+function nearestPlayer(o) {
+  let b = null, bd = 1e9;
+  for (const p of D.players) { if (p.down) continue; const d = dist(o, p); if (d < bd) { bd = d; b = p; } }
+  return b;
+}
+function burst(x, y, hue, n) {
+  for (let i = 0; i < n; i++) {
+    const a = rnd(0, 6.28), s = rnd(40, 200);
+    D.parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rnd(.3, .7), max: .7, hue, size: rnd(2, 5) });
+  }
+}
+function killEnemy(e) {
+  if (e.dead) return;
+  e.dead = true;
+  D.kills[e.type] = (D.kills[e.type] || 0) + 1;
+  G.stats.kills++;
+  gainXP(ET[e.type].hp * 3);
+  if (D.w) { D.w.ds.kills[e.type] = (D.w.ds.kills[e.type] || 0) + 1; qAdd('slay', e.type); if (e.type === 'pivot') bossDown(); }
+  burst(e.x, e.y, e.hue, 14);
+  const n = Math.min(4, ET[e.type].drop);
+  for (let i = 0; i < n; i++) {
+    const a = rnd(0, 6.28);
+    D.items.push({ x: e.x, y: e.y, vx: Math.cos(a) * rnd(40, 120), vy: Math.sin(a) * rnd(40, 120), life: 14, hue: ri(0, 359), val: 1 });
+  }
+  if (e.type === 'slime' && !e.small) {
+    for (let i = 0; i < 2; i++) {
+      D.enemies.push({ type: 'slime', x: e.x + rnd(-10, 10), y: e.y + rnd(-10, 10), hp: 1, r: 10, cd: 1, hit: 0, hcd: 0,
+        dorm: false, hue: e.hue, wob: rnd(0, 6), kx: rnd(-150, 150), ky: rnd(-150, 150), small: true });
+    }
+  }
+}
+function hurt(p, dmg) {
+  if (p.inv > 0 || p.down) return;
+  if (D.tut && p.hp <= 1) { p.inv = 1; D.shake = 4; return; }
+  if (p.buff.rage > 0 && Math.random() < .5) { p.inv = .4; float(p.x, p.y - 28, 'RESIST', '#ff6b6b'); return; }
+  p.hp -= dmg; p.inv = 1; D.shake = 8; sfx.hurt();
+  burst(p.x, p.y, p.hue, 8);
+  if (p.hp <= 0) { p.hp = 0; p.down = true; p.rev = 0; lg('down'); }
+}
+function strike(p) {
+  p.cd = p.buff.surge > 0 ? .12 : (p.ai ? .6 : .34); p.swing = .16; sfx.swing();
+  for (const e of D.enemies) {
+    if (e.dead) continue;
+    const dx = e.x - p.x, dy = e.y - p.y, d = Math.hypot(dx, dy) || 1;
+    if (d < e.r + 52 && (dx / d) * p.face.x + (dy / d) * p.face.y > -.1) {
+      const r = rollAtk(p, e);
+      e.dorm = false;
+      if (r.fumble) p.stun = Math.max(p.stun, .5);
+      float(e.x, e.y - e.r - 8, r.txt, r.crit ? '#ffe14d' : r.hit ? '#ffffff' : '#c9a8ff');
+      if (!r.hit) continue;
+      e.hp -= r.dmg; e.hit = .15; e.kx = dx / d * 340; e.ky = dy / d * 340; sfx.hit();
+      if (e.hp <= 0) killEnemy(e);
+    }
+  }
+  for (const s of D.shots) {
+    if (s.f) continue;
+    const dx = s.x - p.x, dy = s.y - p.y, d = Math.hypot(dx, dy) || 1;
+    if (d < 52 && (dx / d) * p.face.x + (dy / d) * p.face.y > -.1) { s.vx = -s.vx; s.vy = -s.vy; s.f = true; sfx.hit(); }
+  }
+  if (D.anoms) for (const a of D.anoms) {
+    if (a.dead) continue;
+    const dx = a.x - p.x, dy = a.y - p.y, d = Math.hypot(dx, dy) || 1;
+    if (d < 70 && (dx / d) * p.face.x + (dy / d) * p.face.y > -.2) {
+      a.hp--; a.hit = .2; sfx.hit(); burst(a.x, a.y, 300, 6);
+      if (a.hp <= 0) { a.dead = true; fixAnomaly(a, p); } else float(a.x, a.y - 40, 'fixing...', '#ff9de6');
+    }
+  }
+  if (D.anoms) D.anoms = D.anoms.filter(a => !a.dead);
+}
+function aiMove(p, dt) {
+  p.aiT = (p.aiT || 0) - dt;
+  if (p.aiT <= 0 || !p.aiLast) {
+    p.aiT = rnd(.4, .8);
+    p.aiLast = Math.random() < .18 ? [0, 0, false] : aiThink(p);
+  }
+  return p.aiLast;
+}
+function aiThink(p) {
+  const o = D.players[0];
+  let ax = 0, ay = 0, atk = false;
+  const go = (t, stop) => { const dx = t.x - p.x, dy = t.y - p.y, d = Math.hypot(dx, dy); if (d > stop) { ax = dx / d; ay = dy / d; } return d; };
+  if (o.down) { go(o, 20); return [ax, ay, false]; }
+  let best = null, bd = 1e9;
+  for (const e of D.enemies) { if (e.dorm || e.dead) continue; const d = dist(p, e); if (d < bd) { bd = d; best = e; } }
+  if (best && bd < 150) {
+    const d = go(best, 34);
+    if (d < 48) { atk = Math.random() > .3; p.face = { x: (best.x - p.x) / d, y: (best.y - p.y) / d }; }
+    return [ax, ay, atk];
+  }
+  if (D.plots[0] && dist(p, D.plots[0]) < 150) { go(D.plots[0], 6); return [ax, ay, false]; }
+  let ti = null, td = 1e9;
+  for (const i of D.items) { const d = dist(p, i); if (d < td) { td = d; ti = i; } }
+  if (ti && td < 110) { go(ti, 4); return [ax, ay, false]; }
+  go(o, 150);
+  return [ax, ay, false];
+}
+function updPlayer(p, dt) {
+  p.cd = Math.max(0, p.cd - dt); p.swing = Math.max(0, p.swing - dt); p.inv = Math.max(0, p.inv - dt);
+  p.spCd = Math.max(0, (p.spCd || 0) - dt); for (const k in p.buff) p.buff[k] = Math.max(0, p.buff[k] - dt);
+  p.stun = Math.max(0, p.stun - dt); p.invertT = Math.max(0, p.invertT - dt);
+  if (p.down) return;
+  let ax = 0, ay = 0, atk = false, spc = false;
+  if (p.ai) {
+    const r = aiMove(p, dt); ax = r[0]; ay = r[1]; atk = r[2];
+    spc = p.spCd <= 0 && Math.random() < .03 && (D.enemies.some(e => !e.dorm && !e.dead && dist(e, p) < 130) || (p.cls === 'Cleric' && D.players.some(q => q.hp <= 2)));
+  }
+  else {
+    const c = CTRL[p.id];
+    ax = (keys[c.r] ? 1 : 0) - (keys[c.l] ? 1 : 0);
+    ay = (keys[c.d] ? 1 : 0) - (keys[c.u] ? 1 : 0);
+    atk = pressed.has(c.a);
+    spc = pressed.has(c.s);
+  }
+  if (p.invertT > 0) { ax = -ax; ay = -ay; }
+  const l = Math.hypot(ax, ay);
+  if (l > 0) { ax /= l; ay /= l; if (!(p.ai && atk)) p.face = { x: ax, y: ay }; }
+  const sp = (p.ai ? .72 : 1) * (190 + G.upg.spd * 23 + mod(p.st.dex) * 8) * (p.stun > 0 ? .35 : 1) * (p.swing > 0 ? .8 : 1);
+  p.vx += (ax * sp - p.vx) * Math.min(1, dt * 12);
+  p.vy += (ay * sp - p.vy) * Math.min(1, dt * 12);
+  let dx = p.vx * dt, dy = p.vy * dt;
+  if (D.drift) { dx += D.drift.x * dt; dy += D.drift.y * dt; }
+  p.x = clamp(p.x + dx, 16, D.bw - 16);
+  p.y = clamp(p.y + dy, D.mt, D.bh - D.mb);
+  if (D.world) pushOut(p, 13);
+  if (atk && p.cd <= 0) strike(p);
+  if (spc && p.spCd <= 0) useSpecial(p);
+}
+
+/* ---------- play update ---------- */
+function updatePlay(dt) {
+  if (D.intro > 0) { if (pressed.has('Space') || CTRL.some(c => pressed.has(c.a))) D.intro = 0; else D.intro -= dt; return; }
+  if (D.card) { D.card.t += dt; if (D.card.t > .5 && (pressed.has('Space') || CTRL.some(c => pressed.has(c.a)))) D.card = D.cards.shift() || null; return; }
+  D.t += dt;
+  D.mid = partyMid();
+  D.shake = Math.max(0, D.shake - dt * 20);
+  if (D.banner) { D.banner.t -= dt; if (D.banner.t <= 0) D.banner = null; }
+  if (D.driftT > 0) { D.driftT -= dt; if (D.driftT <= 0) D.drift = null; }
+  if (!D.over && !D.tut) D.timeLeft -= dt;
+
+  D.players.forEach(p => updPlayer(p, dt));
+  if (D.world) updCam(dt);
+
+  // reviving
+  for (const p of D.players) {
+    if (!p.down) continue;
+    let near = 0;
+    for (const o of D.players) if (o !== p && !o.down && dist(o, p) < 36) near += 1;
+    if (dist(D.intern, p) < 36) near += .5;
+    if (near > 0) p.rev += dt * near; else p.rev = Math.max(0, p.rev - dt);
+    if (p.rev >= 1.4) { p.down = false; p.hp = 2; p.inv = 1.6; p.rev = 0; lg('revive'); sfx.pick(); burst(p.x, p.y, 120, 14); }
+  }
+
+  // hazards
+  for (let i = D.haz.length - 1; i >= 0; i--) {
+    const h = D.haz[i];
+    if (h.life) { h.life -= dt; if (h.life <= 0) { D.haz.splice(i, 1); continue; } }
+    if (h.type === 'pend') {
+      const b = pendPos(h);
+      for (const p of D.players) {
+        if (p.down) continue;
+        const d = dist(b, p);
+        if (d < h.r + 13 && p.inv <= 0 && (!D.world || G.chaos >= 1)) {
+          hurt(p, 1); lg('pend');
+          const dx = p.x - b.x, dy = p.y - b.y, dd = Math.hypot(dx, dy) || 1;
+          p.vx = dx / dd * 520; p.vy = dy / dd * 520;
+        }
+      }
+      for (const e of D.enemies) {
+        if (e.dead || e.hcd > 0) continue;
+        if (dist(b, e) < h.r + e.r) {
+          e.hp -= 2; e.hcd = .6; e.hit = .15;
+          const dx = e.x - b.x, dy = e.y - b.y, dd = Math.hypot(dx, dy) || 1;
+          e.kx = dx / dd * 420; e.ky = dy / dd * 420; e.dorm = false;
+          if (e.hp <= 0) killEnemy(e);
+        }
+      }
+    } else {
+      const s = sunPos(h);
+      for (const p of D.players) {
+        if (p.down) continue;
+        if (dist(s, p) < h.r) {
+          p.burn += dt;
+          if (p.burn >= 1.2 + .4 * G.upg.shade + Math.max(-.3, mod(p.st.wis) * .15)) { p.burn = 0; hurt(p, 1); lg('sun'); }
+        } else p.burn = Math.max(0, p.burn - dt * .8);
+      }
+    }
+  }
+
+  // enemies
+  for (const e of D.enemies) {
+    if (e.dead) continue;
+    if (D.world && !e.keep && !e.dummy) { const np = nearestPlayer(e); if (np && dist(e, np) > 1300) { e.dead = true; continue; } }
+    const t = ET[e.type];
+    e.hit = Math.max(0, e.hit - dt); e.hcd = Math.max(0, e.hcd - dt);
+    if (e.dummy) continue;
+    e.stun = Math.max(0, (e.stun || 0) - dt);
+    if (e.stun > 0) continue;
+    const tg = nearestPlayer(e);
+    if (e.dorm) { if (tg && dist(e, tg) < 62) { e.dorm = false; lg('mimic'); banner('THE CHEST HAS TEETH', 1.6); } else continue; }
+    const chase = tg && (!D.world || e.aggro || dist(e, tg) < aggroR());
+    if (chase) {
+      const dx = tg.x - e.x, dy = tg.y - e.y, d = Math.hypot(dx, dy) || 1;
+      let sp = t.sp * (1 + G.chaos * .06);
+      if (e.type === 'dragon' || e.type === 'beholder') { const keep = e.type === 'dragon' ? 220 : 300; if (d < keep) sp = -sp * .5; }
+      const wob = G.chaos >= 3 ? Math.sin(D.t * 5 + e.wob) * 40 : 0;
+      e.x += (dx / d * sp + e.kx - dy / d * wob) * dt;
+      e.y += (dy / d * sp + e.ky + dx / d * wob) * dt;
+    } else { e.x += (e.kx + Math.cos(e.wob + D.t * .4) * 24) * dt; e.y += (e.ky + Math.sin(e.wob * 1.3 + D.t * .35) * 24) * dt; }
+    e.kx *= Math.pow(.02, dt); e.ky *= Math.pow(.02, dt);
+    if (D.drift) { e.x += D.drift.x * dt * .6; e.y += D.drift.y * dt * .6; }
+    e.x = clamp(e.x, 12, D.bw - 12); e.y = clamp(e.y, D.mt - 2, D.bh - D.mb + 4);
+    if (D.world) {
+      if (!e.keep) { const vx = e.x - VIL.x, vy = e.y - VIL.y, vd = Math.hypot(vx, vy) || 1; if (vd < 210) { e.x += vx / vd * 150 * dt; e.y += vy / vd * 150 * dt; } }
+      pushOut(e, e.r);
+    }
+    if (chase && (e.type === 'dragon' || e.type === 'beholder')) {
+      e.cd -= dt;
+      if (e.cd <= 0) {
+        if (e.type === 'dragon') {
+          e.cd = 2.2;
+          const dx = tg.x - e.x, dy = tg.y - e.y, d = Math.hypot(dx, dy) || 1;
+          D.shots.push({ x: e.x, y: e.y, vx: dx / d * 175, vy: dy / d * 175, r: 8, life: 4, f: false, hue: 24 });
+        } else {
+          e.cd = 3;
+          const a0 = rnd(0, 6.28);
+          for (let k = 0; k < 6; k++) { const a = a0 + k * 1.047; D.shots.push({ x: e.x, y: e.y, vx: Math.cos(a) * 130, vy: Math.sin(a) * 130, r: 7, life: 4, f: false, hue: 290 }); }
+        }
+      }
+    }
+    for (const p of D.players) {
+      if (p.down || p.inv > 0) continue;
+      if (dist(e, p) < e.r + 13) {
+        hurt(p, t.dmg);
+        const dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 1;
+        p.vx = dx / d * 300; p.vy = dy / d * 300;
+      }
+    }
+  }
+  D.enemies = D.enemies.filter(e => !e.dead);
+
+  // spawning
+  if (!D.over && !D.tut && !D.world) {
+    D.spawnT -= dt;
+    if (D.spawnT <= 0) { spawnEnemy(); D.spawnT = Math.max(.7, 2.6 - G.day * .14 - G.chaos * .14 + rnd(0, .8)); }
+  }
+
+  // items
+  for (let i = D.items.length - 1; i >= 0; i--) {
+    const it = D.items[i];
+    if (!D.tut) it.life -= dt;
+    it.x += it.vx * dt; it.y += it.vy * dt;
+    it.vx *= Math.pow(.05, dt); it.vy *= Math.pow(.05, dt);
+    it.x = clamp(it.x, 14, D.bw - 14); it.y = clamp(it.y, D.mt, D.bh - D.mb + 2);
+    let got = false;
+    for (const p of D.players) if (!p.down && dist(p, it) < 22) got = true;
+    if (dist(D.intern, it) < 30) got = true;
+    if (got) { G.thing += it.val; D.earned += it.val; sfx.pick(); D.items.splice(i, 1); }
+    else if (it.life <= 0) D.items.splice(i, 1);
+  }
+
+  // plot points
+  D.plotCool -= dt;
+  if (!D.over && !D.plots.length && D.spawnedPlots < D.need && D.plotCool <= 0 && !D.tut && !D.world) {
+    let x = 0, y = 0;
+    for (let k = 0; k < 12; k++) {
+      x = rnd(80, W - 80); y = rnd(100, H - 90);
+      if (D.players.every(p => dist(p, { x, y }) > 170)) break;
+    }
+    D.plots.push({ x, y, t: 0 }); D.spawnedPlots++;
+  }
+  for (let i = D.plots.length - 1; i >= 0; i--) {
+    const pl = D.plots[i]; pl.t += dt;
+    const who = D.players.find(p => !p.down && dist(p, pl) < 26);
+    if (who) {
+      D.plots.splice(i, 1); D.got++; D.plotCool = 1; sfx.plot(); burst(pl.x, pl.y, 52, 24);
+      if (D.world) { gainXP(8); qAdd('clues'); }
+      const d = ri(1, 20), m = Math.max(mod(who.st.int), mod(who.st.wis)) + profB(), dc = 7 + Math.ceil(G.day / 2) + Math.floor(G.chaos / 2);
+      D.lastRoll = { d, at: T };
+      if (D.tut) banner(`PLOT POINT ${D.got} OF ${D.need}`, 1.4);
+      else if (d === 20) { D.players.forEach(q => { if (!q.down) q.hp = Math.min(q.mx, q.hp + 1); }); banner(`INVESTIGATION NAT 20: A SENSIBLE CLUE (+1 HP)`, 2); }
+      else if (d + m >= dc) banner(`INVESTIGATION ${d}+${m} vs DC ${dc}: CLUE FOUND (${D.got}/${D.need})`, 2);
+      else { banner(`INVESTIGATION ${d}+${m} vs DC ${dc}: BAD LEAD (${D.got}/${D.need})`, 2.4); spawnEnemy('goblin', pl.x, pl.y); spawnEnemy('goblin', pl.x + 20, pl.y); }
+    }
+  }
+
+  // intern
+  updIntern(dt);
+
+  // shots
+  for (let i = D.shots.length - 1; i >= 0; i--) {
+    const s = D.shots[i];
+    s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt;
+    if (s.life <= 0 || s.x < -20 || s.x > D.bw + 20 || s.y < D.mt - 22 || s.y > D.bh + 20) { D.shots.splice(i, 1); continue; }
+    if (s.f) {
+      for (const e of D.enemies) {
+        if (e.dead) continue;
+        if (dist(s, e) < s.r + e.r) { e.hp -= 1; e.hit = .12; e.dorm = false; sfx.hit(); if (e.hp <= 0) killEnemy(e); D.shots.splice(i, 1); break; }
+      }
+    } else {
+      for (const p of D.players) {
+        if (p.down) continue;
+        if (dist(s, p) < s.r + 13) { hurt(p, 1); D.shots.splice(i, 1); break; }
+      }
+    }
+  }
+
+  // world events
+  D.evT -= dt;
+  if (D.evT <= 0 && !D.tut) { D.evT = Math.max(5, 14 - G.chaos * 1.8) + rnd(0, 3); fireEvent(); }
+  for (let i = D.fx.length - 1; i >= 0; i--) {
+    const f = D.fx[i]; f.t += dt;
+    if (f.type === 'cheese' && !f.hit && f.t >= 1.6) {
+      f.hit = true; D.shake = 5; sfx.boom();
+      for (const p of D.players) if (!p.down && dist(p, f) < 34) { p.stun = 1.3; lg('cheese'); }
+      for (const e of D.enemies) if (dist(e, f) < 34) { e.kx = 0; e.ky = 0; e.hp -= 1; if (e.hp <= 0) killEnemy(e); }
+      burst(f.x, f.y, 55, 10);
+    }
+    if (f.t > 2.1) D.fx.splice(i, 1);
+  }
+
+  // particles
+  for (let i = D.parts.length - 1; i >= 0; i--) {
+    const q = D.parts[i]; q.life -= dt; q.x += q.vx * dt; q.y += q.vy * dt; q.vx *= .92; q.vy *= .92;
+    if (q.life <= 0) D.parts.splice(i, 1);
+  }
+
+  if (D.texts) for (let i = D.texts.length - 1; i >= 0; i--) { const f = D.texts[i]; f.life -= dt; f.y -= 28 * dt; if (f.life <= 0) D.texts.splice(i, 1); }
+  // outcome
+  if (D.tut) { updTut(dt); } else if (D.world) { updWorld(dt); } else if (!D.over) {
+    if (D.got >= D.need) { D.over = true; D.res = 'win'; D.overT = 1.8; sfx.win(); say(pick(INTERN.win), 2); banner('THE STORY MADE SENSE (BRIEFLY)', 2); }
+    else if (D.players.every(p => p.down)) { D.over = true; D.res = 'fail'; D.cause = 'down'; D.overT = 1.8; sfx.fail(); say(pick(INTERN.fail), 2); banner('EVERYONE IS ON THE FLOOR', 2); }
+    else if (D.timeLeft <= 0) { D.over = true; D.res = 'fail'; D.cause = 'time'; D.overT = 1.8; sfx.fail(); say(pick(INTERN.fail), 2); banner('THE DAY RAN OUT OF DAY', 2); }
+  } else { D.overT -= dt; if (D.overT <= 0) endDay(); }
+}
+
+function fireEvent() {
+  const opts = [];
+  if (G.day >= 2) opts.push('cheese');
+  if (G.chaos >= 1 || G.day >= 3) opts.push('gravity');
+  if (G.chaos >= 2) opts.push('invert');
+  if (!opts.length) return;
+  const e = pick(opts);
+  if (e === 'cheese') {
+    banner('CHEESE FRONT INCOMING', 2.2);
+    for (let i = 0; i < 6; i++) D.fx.push({ type: 'cheese', x: D.cx + rnd(60, (D.world ? VW : W) - 60), y: D.cy + rnd(100, (D.world ? VH : H) - 70), t: 0 });
+  } else if (e === 'gravity') {
+    const a = rnd(0, 6.28);
+    D.drift = { x: Math.cos(a) * 110, y: Math.sin(a) * 110 }; D.driftT = 4;
+    banner('THE GROUND CHANGED ITS MIND ABOUT DOWN', 2.2); lg('gravity');
+  } else {
+    const alive = D.players.filter(p => !p.down);
+    if (!alive.length) return;
+    const p = pick(alive); p.invertT = 5;
+    banner(`${p.id ? B_NAME : A_NAME}: LEFT IS RIGHT NOW`, 2.2); lg('invert');
+  }
+}
+
+const INTERN = {
+  idle: ["I'M SO EXCITED TO BE HERE!!", "Is this a quest? THIS IS A QUEST!", "I named the pendulum. It's Gary.", "Can I carry that? I'll carry that!", "I've never seen a dragon in person!!", "I believe in the plot!!!", "Nobody has yelled at me today!!"],
+  chaos: ["Is the floor supposed to be that colour?", "I think the sun is looking at me.", "Nobody told me about the cheese!", "Reasonable is a strong word!", "This wasn't in my orientation packet!!", "I filed a form about the gravity!"],
+  button: ["I pressed a button!! Was that okay?", "The button said DO NOT but I did anyway!", "I touched the red one. Sorry!!"],
+  win: ["WE DID PLOT!!", "Best. Day. Ever.", "I'm putting this on my resume!"],
+  fail: ["That was a learning opportunity!!", "I'll fix it by tomorrow!!", "Everyone makes mistakes! Mostly me!"]
+};
+function updIntern(dt) {
+  const I = D.intern;
+  I.sayT = Math.max(0, I.sayT - dt);
+  let tx = null, ty = 0;
+  const down = D.players.find(p => p.down);
+  let near = null, nd = 200;
+  for (const it of D.items) { const d = dist(I, it); if (d < nd) { nd = d; near = it; } }
+  if (down) { tx = down.x; ty = down.y; }
+  else if (near) { tx = near.x; ty = near.y; }
+  else {
+    const p = nearestPlayer(I);
+    if (p) { tx = p.x + Math.cos(D.t) * 50; ty = p.y + 46 + Math.sin(D.t * 1.3) * 20; }
+  }
+  if (tx !== null) {
+    const dx = tx - I.x, dy = ty - I.y, d = Math.hypot(dx, dy);
+    if (d > 8) { I.x += dx / d * 155 * dt; I.y += dy / d * 155 * dt; }
+  }
+  I.x = clamp(I.x, 14, D.bw - 14); I.y = clamp(I.y, D.mt, D.bh - D.mb + 2);
+  I.thr -= dt;
+  if (I.thr <= 0) {
+    let b = null, bd = 260;
+    for (const e of D.enemies) { if (e.dorm || e.dead) continue; const d = dist(I, e); if (d < bd) { bd = d; b = e; } }
+    if (b) {
+      const dx = b.x - I.x, dy = b.y - I.y, d = Math.hypot(dx, dy) || 1;
+      D.shots.push({ x: I.x, y: I.y, vx: dx / d * 290, vy: dy / d * 290, r: 7, life: 1.4, f: true, hue: 30 });
+      I.thr = Math.max(1.1, 2.6 - .3 * G.upg.coffee);
+      if (Math.random() < .3) say(pick(["Coffee for you!", "TEAMWORK!!", "Synergy!!"]), 1.4);
+    } else I.thr = .4;
+  }
+  I.chat -= dt;
+  if (I.chat <= 0 && I.sayT <= 0) { I.chat = rnd(6, 9); say(pick(D.tut ? (D.tut.reb >= 3 ? INTERN.chaos : INTERN.idle) : (G.chaos >= 2 && Math.random() < .55 ? INTERN.chaos : INTERN.idle)), 2.8); }
+  if (G.chaos >= 1 && !D.over) {
+    D.buttonT -= dt;
+    if (D.buttonT <= 0) {
+      D.buttonT = rnd(18, 28); lg('button');
+      say(pick(INTERN.button), 2.6); banner('PIP PRESSED A BUTTON', 2);
+      if (Math.random() < .5) { for (let i = 0; i < 3; i++) spawnEnemy(); }
+      else { const h = mkPend(10); if (D.world) { h.px = D.mid.x + rnd(-250, 250); h.py = D.mid.y - 280; } D.haz.push(h); }
+    }
+  }
+}
+
+/* ---------- story ---------- */
+const KN = { goblin: ['goblin', 'goblins'], skeleton: ['skeleton', 'skeletons'], slime: ['slime', 'slimes'],
+  mimic: ['mimic', 'mimics'], dragon: ['dragon', 'dragons'], beholder: ['beholder', 'beholders'], pivot: ['pivot', 'pivots'] };
+function killText(k) {
+  const arr = Object.entries(k).sort((a, b) => b[1] - a[1]);
+  if (!arr.length) return 'nobody at all';
+  const [t, n] = arr[0];
+  return `${n} ${KN[t][n === 1 ? 0 : 1]}`;
+}
+const ANEC = {
+  pend: () => 'A pendulum took it personally.',
+  sun: () => 'The sun, for reasons never explained, was out to get everyone.',
+  cheese: () => 'Cheese fell from the sky, and nobody called it unreasonable anymore.',
+  button: () => `${P_NAME} pressed a button marked DO NOT, enthusiastically.`,
+  revive: () => 'The partners picked each other up off the floor, which was the nicest part of the chapter.',
+  invert: () => 'Left became right for a while. Nobody apologised.',
+  gravity: () => 'The ground changed its mind about down.',
+  mimic: () => 'A chest bit someone. This is why we do not trust chests.',
+  crit: () => 'A natural 20 was rolled, and the whole table cheered.',
+  fumble: () => 'A natural 1 was rolled, and the table politely pretended not to see.'
+};
+const ABS1 = ['A moon wore a hat.', 'The dragon filed a complaint with a sandwich.', 'Somewhere a ladder became mayor.', 'The weather was a Tuesday.'];
+const ABS2 = ['The DM is fairly sure the floor was a rumour.', 'A staircase was elected sheriff of Thursday.', 'Gravity asked for a raise and got it.', 'Everyone agreed the colour was too loud.'];
+function genLine(win, ch) {
+  const d = G.day, kt = killText(D.kills);
+  let main;
+  if (win) {
+    main = pick([
+      `Session ${d}. ${A_NAME} the ${G.chars[0].cls} and ${B_NAME} the ${G.chars[1].cls} gathered ${D.need} plot points and dealt with ${kt}. It almost made sense.`,
+      `In session ${d}, ${kt} were dealt with, ${D.need} plot points turned up under a rug, and nobody asked about the rug.`,
+      `Session ${d} went well. ${P_NAME} wrote it all down in crayon.`
+    ]);
+  } else if (D.cause === 'down') {
+    main = pick([
+      `Session ${d}. ${A_NAME} and ${B_NAME} were both knocked flat, and the plot wandered off without them.`,
+      `Session ${d} ended on the floor. The plot, regrettably, left the building.`
+    ]);
+  } else {
+    main = pick([
+      `Session ${d}. Time ran out with ${D.got} of ${D.need} plot points, which the Dungeon Master found rude.`,
+      `Session ${d} ran out of day. The plot was last seen heading for the exit.`
+    ]);
+  }
+  const ks = Object.keys(D.log).filter(k => ANEC[k]);
+  let out = main;
+  if (ks.length) out += ' ' + ANEC[pick(ks)]();
+  if (ch >= 2) out += ' ' + pick(ABS1);
+  if (ch >= 4) out += ' ' + pick(ABS2);
+  return out;
+}
+function endDay() {
+  const win = D.res === 'win', ch = G.chaos;
+  const line = genLine(win, ch);
+  if (win) { G.stats.wins++; G.sense = clamp(G.sense + 14 + D.need, 0, 100); G.chaos = Math.max(0, G.chaos - 1); }
+  else { G.stats.fails++; G.sense = clamp(G.sense - 16, 0, 100); G.chaos++; }
+  G.story.push({ text: line, chaos: ch, win });
+  G.sum = { win, line, earned: D.earned, got: D.got, need: D.need };
+  G.scene = 'sum';
+}
+
+/* ---------- shop ---------- */
+const POOL = [
+  { id: 'dmg', name: 'Mild Sword', desc: '+1 strike damage', cost: 6, fx: () => G.upg.dmg++ },
+  { id: 'spd', name: 'Sensible Boots', desc: 'Move 12% faster', cost: 5, fx: () => G.upg.spd++ },
+  { id: 'hp', name: 'Plot Armor', desc: '+1 max health', cost: 6, fx: () => { G.upg.hp++; if (D) D.players.forEach(applyLevel); } },
+  { id: 'potion', name: 'Reasonable Potion', desc: 'Heal everyone fully', cost: 3, fx: () => { D.players.forEach(q => { q.down = false; q.hp = q.mx; }); } },
+  { id: 'shade', name: 'Umbrella of Shade', desc: 'Sunburn takes longer', cost: 5, fx: () => G.upg.shade++ },
+  { id: 'pend', name: 'Pendulum Insurance', desc: 'Pendulums swing slower', cost: 7, fx: () => G.upg.pend++ },
+  { id: 'coffee', name: 'Intern Coffee', desc: 'Pip throws more often', cost: 4, fx: () => G.upg.coffee++ },
+  { id: 'foot', name: 'Sensible Footnote', desc: '+8 reasonableness', cost: 5, fx: () => { G.sense = clamp(G.sense + 8, 0, 100); } }
+];
+function openShop() {
+  const items = POOL.slice().sort(() => Math.random() - .5).slice(0, 3).map(i => Object.assign({ bought: false }, i, { cost: Math.max(2, i.cost + Math.floor(G.chaos / 2) - chaDisc()) }));
+  SH = { items, msg: `${P_NAME}: "Everything here is reasonable! Mostly!"` };
+  G.scene = 'shop';
+}
+function buy(i) {
+  const it = SH.items[i];
+  if (!it || it.bought) return;
+  if (G.thing < it.cost) { SH.msg = `${P_NAME}: "We are ${it.cost - G.thing} thingamajigs short! I can make a face at the shopkeeper?"`; return; }
+  G.thing -= it.cost; it.bought = true; it.fx(); sfx.pick();
+  SH.msg = `${P_NAME}: "Purchased! I'll put it on the receipt!!"`;
+}
+function nextDay() { G.scene = 'play'; }
+function afterSummary() {
+  if (G.day >= 7) startEnding(); else openShop();
+}
+
+/* ---------- ending ---------- */
+function startEnding() {
+  const lines = [{ text: `Ahem. Gather round, ${A_NAME}, ${B_NAME}, and Pip.`, chaos: 0 },
+    { text: 'I am your Dungeon Master. I watched every second of this campaign, and I would like to read the recap back to you.', chaos: 0 }];
+  G.story.forEach(s => lines.push({ text: s.text, chaos: s.chaos }));
+  lines.push({ text: `By the end, the story was ${Math.round(G.sense)} percent reasonable. I measured it with a ruler I found inside a pendulum.`, chaos: 0 });
+  lines.push({ text: G.sense >= 70 ? 'It made sense. Mostly. I am as surprised as you are.'
+    : G.sense >= 40 ? 'It made about as much sense as a week can.'
+    : 'None of it made sense, and I will miss every unreasonable second.', chaos: 0 });
+  lines.push({ text: 'Sniff. Please put your dice down. Thank you for the campaign. Goodbye.', chaos: 0 });
+  E = { lines, i: 0, t: 0, speaking: false, done: false, drops: [], puddle: 0, acc: 0 };
+  G.scene = 'end';
+  speak(lines[0].text);
+}
+function speak(text) {
+  if (!E) return;
+  E.speaking = false;
+  try {
+    if (!musicOn || !('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = .85; u.pitch = .7; u.volume = 1;
+    u.onend = u.onerror = () => { E.speaking = false; };
+    E.speaking = true;
+    speechSynthesis.speak(u);
+  } catch (e) { E.speaking = false; }
+}
+function updateEnd(dt) {
+  E.t += dt;
+  const cur = E.lines[E.i], len = cur.text.length;
+  E.acc += dt * (6 + E.i * 1.1);
+  while (E.acc >= 1) { E.acc -= 1; E.drops.push({ x: rnd(0, W), y: -10, vy: rnd(90, 170), s: rnd(2, 5) }); }
+  for (const d of E.drops) d.y += d.vy * dt;
+  E.drops = E.drops.filter(d => d.y < H - 20);
+  E.puddle = (E.i / E.lines.length) * 64;
+  if (!E.done) {
+    const fin = E.t > len / 16 + 1.2 && (!E.speaking || E.t > len / 9 + 4);
+    if (pressed.has('Space')) { advanceEnd(); }
+    else if (fin) advanceEnd();
+  } else if (pressed.has('Space')) { G.scene = 'title'; E = null; try { speechSynthesis.cancel(); } catch (e) {} }
+}
+function advanceEnd() {
+  if (E.i < E.lines.length - 1) { E.i++; E.t = 0; speak(E.lines[E.i].text); }
+  else { E.done = true; E.speaking = false; }
+}
+
+/* ---------- drawing helpers ---------- */
+function txt(s, x, y, size, fill, align, family, stroke, sw) {
+  ctx.font = `${size}px ${family || BODY}`;
+  ctx.textAlign = align || 'left'; ctx.textBaseline = 'middle';
+  if (sw !== 0) { ctx.lineWidth = sw || 4; ctx.strokeStyle = stroke || '#0a0014'; ctx.lineJoin = 'round'; ctx.strokeText(s, x, y); }
+  ctx.fillStyle = fill || '#fff'; ctx.fillText(s, x, y);
+}
+function wrap(s, maxW, size, family) {
+  ctx.font = `${size}px ${family || BODY}`;
+  const words = s.split(' '), lines = []; let cur = '';
+  for (const w of words) {
+    const t = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(t).width > maxW && cur) { lines.push(cur); cur = w; } else cur = t;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+function circle(x, y, r, fill, stroke, sw) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.lineWidth = sw || 3; ctx.strokeStyle = stroke; ctx.stroke(); }
+}
+function eyes(x, y, gap, r, lx, ly) {
+  circle(x - gap, y, r, '#fff', '#0a0014', 2); circle(x + gap, y, r, '#fff', '#0a0014', 2);
+  circle(x - gap + lx * r * .45, y + ly * r * .45, r * .45, '#0a0014'); circle(x + gap + lx * r * .45, y + ly * r * .45, r * .45, '#0a0014');
+}
+function hsl(h, s, l, a) { return `hsla(${((h % 360) + 360) % 360},${s}%,${l}%,${a === undefined ? 1 : a})`; }
+function hueNow() { return (T * (10 + vl() * 22)) % 360; }
+const INK = '#0a0014';
+
+function drawFloor() {
+  const v = vl();
+  const sat = clamp(14 + v * 20, 14, 92), h0 = (140 + T * (3 + v * 16)) % 360;
+  const lA = clamp(64 - v * 3.5, 48, 64), lB = clamp(70 - v * 4, 54, 70), off = clamp(12 + v * 30, 12, 150);
+  for (let ty = 0; ty < 10; ty++) {
+    for (let tx = 0; tx < 16; tx++) {
+      const alt = (tx + ty) & 1;
+      let h = h0 + (alt ? off : 0);
+      if (v >= 2.5) h += Math.sin(T * .6 + tx * ty) * clamp((v - 2.5) * 18, 0, 70);
+      ctx.fillStyle = hsl(h, sat, alt ? lA : lB);
+      ctx.fillRect(tx * 60, ty * 60, 60, 60);
+    }
+  }
+}
+function drawSunCorner() {
+  const x = W - 70, y = 96;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(T * .25);
+  ctx.fillStyle = 'rgba(255,240,120,.9)';
+  for (let i = 0; i < 12; i++) { ctx.rotate(.5236); ctx.beginPath(); ctx.moveTo(44, -8); ctx.lineTo(78, 0); ctx.lineTo(44, 8); ctx.fill(); }
+  ctx.restore();
+  circle(x, y, 40, '#fff36b', INK, 4);
+  circle(x - 12, y - 6, 5, INK); circle(x + 12, y - 6, 5, INK);
+  ctx.beginPath(); ctx.arc(x, y + 6, 15, .15 * Math.PI, .85 * Math.PI); ctx.lineWidth = 4; ctx.strokeStyle = INK; ctx.stroke();
+}
+function drawPlayer(p) {
+  const col = hsl(p.hue, 100, 62);
+  ctx.save(); ctx.translate(p.x, p.y);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(0, 12, 14, 6, 0, 0, 6.28); ctx.fill();
+  if (p.down) {
+    circle(0, 0, 13, '#777', INK, 3);
+    txt('x  x', 0, -2, 14, INK, 'center', BODY, '#777', 0);
+    if (p.rev > 0) { ctx.beginPath(); ctx.arc(0, 0, 22, -1.57, -1.57 + 6.28 * (p.rev / 1.4)); ctx.lineWidth = 5; ctx.strokeStyle = '#7dff6b'; ctx.stroke(); }
+    else { txt('help', 0, -26, 12, '#fff', 'center'); }
+    ctx.restore(); return;
+  }
+  if (p.inv > 0 && Math.floor(T * 20) % 2) ctx.globalAlpha = .5;
+  if (p.swing > 0) {
+    const a = Math.atan2(p.face.y, p.face.x);
+    ctx.beginPath(); ctx.arc(0, 0, 40, a - 1.1, a + 1.1); ctx.lineWidth = 9; ctx.strokeStyle = '#fff'; ctx.stroke();
+    ctx.lineWidth = 3; ctx.strokeStyle = INK; ctx.beginPath(); ctx.arc(0, 0, 44.5, a - 1.1, a + 1.1); ctx.stroke();
+  }
+  circle(0, 0, 14, col, INK, 3);
+  if (p.buff.rage > 0) circle(0, 0, 19, null, '#ff4d4d', 3);
+  if (p.buff.surge > 0) circle(0, 0, 19, null, '#ffe14d', 3);
+  if (p.buff.insp > 0) circle(0, 0, 23, null, '#ff9de6', 2);
+  if (p.id === 0) { ctx.fillStyle = '#d9d9e6'; ctx.fillRect(-12, -17, 24, 8); ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.strokeRect(-12, -17, 24, 8); }
+  else { ctx.fillStyle = hsl(p.hue + 120, 100, 40); ctx.beginPath(); ctx.moveTo(-13, -9); ctx.lineTo(0, -34); ctx.lineTo(13, -9); ctx.closePath(); ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = INK; ctx.stroke(); }
+  eyes(0, -1, 5, 3.6, p.face.x, p.face.y);
+  if (p.stun > 0) txt('~ ~ ~', 0, -30, 14, '#ffe14d', 'center');
+  if (p.invertT > 0) txt('?!', 0, -32, 16, '#fff', 'center');
+  if (p.burn > .3) { ctx.beginPath(); ctx.arc(0, 0, 20, -1.57, -1.57 + 6.28 * (p.burn / (1.2 + .4 * G.upg.shade))); ctx.lineWidth = 4; ctx.strokeStyle = '#ff7a1a'; ctx.stroke(); }
+  ctx.restore();
+}
+function drawEnemy(e) {
+  const flash = e.hit > 0;
+  const col = flash ? '#ffffff' : hsl(e.hue + G.chaos * T * 20, 95, 55);
+  const wob = Math.sin(T * 6 + e.wob) * 2;
+  ctx.save(); ctx.translate(e.x, e.y);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(0, e.r - 2, e.r, e.r * .4, 0, 0, 6.28); ctx.fill();
+  const tg = nearestPlayer(e) || { x: e.x, y: e.y + 1 };
+  const dx = tg.x - e.x, dy = tg.y - e.y, d = Math.hypot(dx, dy) || 1, lx = dx / d, ly = dy / d;
+  switch (e.type) {
+    case 'goblin':
+      ctx.fillStyle = col; ctx.strokeStyle = INK; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(-10, -4); ctx.lineTo(-24, -12); ctx.lineTo(-10, 4); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(10, -4); ctx.lineTo(24, -12); ctx.lineTo(10, 4); ctx.fill(); ctx.stroke();
+      circle(0, wob, 12, col, INK, 3); eyes(0, -2 + wob, 4.5, 3.2, lx, ly);
+      ctx.beginPath(); ctx.arc(0, 4 + wob, 5, .1, 3.04); ctx.lineWidth = 2; ctx.strokeStyle = INK; ctx.stroke();
+      break;
+    case 'skeleton':
+      circle(0, wob, 14, flash ? '#fff' : '#f1efe4', INK, 3);
+      ctx.fillStyle = INK; ctx.beginPath(); ctx.arc(-5, -2 + wob, 3.6, 0, 6.28); ctx.arc(5, -2 + wob, 3.6, 0, 6.28); ctx.fill();
+      ctx.fillStyle = col; ctx.fillRect(-7, 7 + wob, 14, 5); ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.strokeRect(-7, 7 + wob, 14, 5);
+      break;
+    case 'slime': {
+      const sq = 1 + Math.sin(T * 5 + e.wob) * .1;
+      ctx.fillStyle = col; ctx.strokeStyle = INK; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(0, 2, e.r * sq, e.r * (2 - sq) * .85, 0, 0, 6.28); ctx.fill(); ctx.stroke();
+      eyes(0, -2, e.r * .32, e.r * .22, lx, ly);
+      break; }
+    case 'mimic':
+      if (e.dorm) {
+        ctx.save(); ctx.rotate(T * 2);
+        ctx.fillStyle = hsl(e.hue, 100, 60); ctx.strokeStyle = INK; ctx.lineWidth = 3;
+        ctx.beginPath(); for (let k = 0; k < 6; k++) { const a = k * 1.047; ctx.lineTo(Math.cos(a) * 13, Math.sin(a) * 13); } ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.restore(); circle(0, 0, 4, INK);
+      } else {
+        ctx.fillStyle = flash ? '#fff' : '#9a5b2e'; ctx.strokeStyle = INK; ctx.lineWidth = 3;
+        ctx.fillRect(-15, -12, 30, 24); ctx.strokeRect(-15, -12, 30, 24);
+        ctx.fillStyle = '#fff';
+        for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.moveTo(-14 + k * 7.5, -2); ctx.lineTo(-10.5 + k * 7.5, 5); ctx.lineTo(-7 + k * 7.5, -2); ctx.fill(); }
+        ctx.fillStyle = '#ff3d6e'; ctx.fillRect(-8, 6, 16, 5);
+        eyes(0, -7, 6, 3, lx, ly);
+      }
+      break;
+    case 'dragon':
+      ctx.fillStyle = col; ctx.strokeStyle = INK; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(-14, -6); ctx.lineTo(-38, -22 + wob); ctx.lineTo(-20, 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(14, -6); ctx.lineTo(38, -22 + wob); ctx.lineTo(20, 6); ctx.closePath(); ctx.fill(); ctx.stroke();
+      circle(0, 0, 24, col, INK, 3);
+      ctx.fillStyle = hsl(e.hue + 40, 90, 70); ctx.beginPath(); ctx.ellipse(lx * 10, ly * 10 + 6, 12, 9, 0, 0, 6.28); ctx.fill(); ctx.stroke();
+      eyes(0, -8, 8, 5, lx, ly);
+      if (e.cd < .5) circle(lx * 20, ly * 20 + 6, 6 + (.5 - e.cd) * 10, '#ff8a1a');
+      break;
+    case 'pivot':
+      circle(0, 0, 22, flash ? '#fff' : '#b08a3a', INK, 4); circle(0, 0, 11, '#6b4f1a', INK, 3); circle(0, 0, 4, '#ffe14d');
+      ctx.strokeStyle = INK; ctx.lineWidth = 3;
+      for (let k = 0; k < 8; k++) { const a = k * .785; ctx.beginPath(); ctx.moveTo(Math.cos(a) * 22, Math.sin(a) * 22); ctx.lineTo(Math.cos(a) * 29, Math.sin(a) * 29); ctx.stroke(); }
+      break;
+    case 'beholder':
+      ctx.strokeStyle = INK; ctx.lineWidth = 3;
+      for (let k = 0; k < 5; k++) { const a = -2.6 + k * .65; ctx.beginPath(); ctx.moveTo(Math.cos(a) * 20, Math.sin(a) * 20); ctx.lineTo(Math.cos(a) * 36 + wob, Math.sin(a) * 36); ctx.stroke(); circle(Math.cos(a) * 38 + wob, Math.sin(a) * 38, 4, '#fff', INK, 2); }
+      circle(0, 0, 26, col, INK, 3);
+      circle(0, -2, 14, '#fff', INK, 3);
+      circle(lx * 5, -2 + ly * 5, 7, hsl(e.hue + 180, 100, 40), INK, 2); circle(lx * 5, -2 + ly * 5, 3, INK);
+      break;
+  }
+  const mh = e.maxhp || ET[e.type].hp;
+  if (!e.dorm && mh > 2 && e.hp < mh) {
+    ctx.fillStyle = INK; ctx.fillRect(-14, -e.r - 12, 28, 6);
+    ctx.fillStyle = '#7dff6b'; ctx.fillRect(-13, -e.r - 11, 26 * clamp(e.hp / mh, 0, 1), 4);
+  }
+  ctx.restore();
+}
+function drawThing(it) {
+  ctx.save(); ctx.translate(it.x, it.y); ctx.rotate(T * 2 + it.hue);
+  if (it.life < 3 && Math.floor(T * 8) % 2) ctx.globalAlpha = .4;
+  ctx.fillStyle = hsl(it.hue + T * 40, 100, 60); ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
+  ctx.beginPath(); for (let k = 0; k < 6; k++) { const a = k * 1.047; ctx.lineTo(Math.cos(a) * 9, Math.sin(a) * 9); } ctx.closePath(); ctx.fill(); ctx.stroke();
+  circle(0, 0, 3, INK);
+  ctx.restore();
+}
+function drawPlot(p) {
+  const pulse = 1 + Math.sin(T * 6) * .12;
+  ctx.save(); ctx.translate(p.x, p.y);
+  circle(0, 0, 30 * pulse, 'rgba(255,255,255,.25)');
+  ctx.rotate(.785); ctx.scale(pulse, pulse);
+  ctx.fillStyle = '#fff36b'; ctx.fillRect(-13, -13, 26, 26); ctx.lineWidth = 4; ctx.strokeStyle = INK; ctx.strokeRect(-13, -13, 26, 26);
+  ctx.restore();
+  txt('!', p.x, p.y + 1, 22, INK, 'center', DISP, '#fff36b', 0);
+  txt('PLOT', p.x, p.y - 34, 12, '#fff', 'center');
+}
+function drawPend(h) {
+  const b = pendPos(h), calm = D.world && G.chaos < 1, ec = calm ? '#7dff6b' : '#ff2f4d';
+  ctx.strokeStyle = INK; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(h.px, h.py); ctx.lineTo(b.x, b.y); ctx.stroke();
+  ctx.strokeStyle = '#d9d9e6'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(h.px, h.py); ctx.lineTo(b.x, b.y); ctx.stroke();
+  circle(h.px, h.py, 9, '#6b6b7a', INK, 3);
+  circle(b.x, b.y, h.r, '#191022', '#d9d9e6', 4);
+  ctx.strokeStyle = ec; ctx.lineWidth = 4;
+  if (!calm) { ctx.beginPath(); ctx.moveTo(b.x - 15, b.y - 11); ctx.lineTo(b.x - 4, b.y - 6); ctx.moveTo(b.x + 15, b.y - 11); ctx.lineTo(b.x + 4, b.y - 6); ctx.stroke(); }
+  circle(b.x - 9, b.y - 1, 3.5, ec); circle(b.x + 9, b.y - 1, 3.5, ec);
+  ctx.beginPath(); if (calm) ctx.arc(b.x, b.y + 6, 8, .3, 2.84); else ctx.arc(b.x, b.y + 14, 8, 3.4, 6.0); ctx.strokeStyle = ec; ctx.stroke();
+}
+function drawSunBeam(h) {
+  const s = sunPos(h);
+  const g = ctx.createRadialGradient(s.x, s.y, 8, s.x, s.y, h.r + 14);
+  g.addColorStop(0, 'rgba(255,255,200,.95)'); g.addColorStop(.7, 'rgba(255,240,90,.6)'); g.addColorStop(1, 'rgba(255,240,90,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, h.r + 14, 0, 6.28); ctx.fill();
+  ctx.setLineDash([8, 8]); ctx.lineDashOffset = -T * 20; ctx.beginPath(); ctx.arc(s.x, s.y, h.r, 0, 6.28); ctx.lineWidth = 3; ctx.strokeStyle = '#ff7a1a'; ctx.stroke(); ctx.setLineDash([]);
+}
+function drawIntern() {
+  const I = D.intern;
+  ctx.save(); ctx.translate(I.x, I.y + Math.sin(T * 9) * 1.5);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(0, 11, 10, 4, 0, 0, 6.28); ctx.fill();
+  circle(0, 0, 10, '#7dff6b', INK, 3);
+  ctx.fillStyle = '#fff'; ctx.fillRect(-7, 8, 14, 5);
+  circle(-3.5, -2, 2, INK); circle(3.5, -2, 2, INK);
+  ctx.beginPath(); ctx.arc(0, 2, 4, .1, 3.04); ctx.lineWidth = 2; ctx.strokeStyle = INK; ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.fillRect(10, -2, 7, 8); ctx.strokeRect(10, -2, 7, 8);
+  ctx.restore();
+  if (I.sayT > 0) {
+    const lines = wrap(I.say, 190, 12);
+    const w = 200, h = lines.length * 16 + 12, bx = clamp(I.x - w / 2, D.cx + 4, D.cx + (D.world ? VW : W) - w - 4), by = clamp(I.y - 30 - h, D.cy + 64, D.cy + (D.world ? VH : H) - h - 60);
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = INK; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.roundRect(bx, by, w, h, 8); ctx.fill(); ctx.stroke();
+    lines.forEach((l, i) => txt(l, bx + w / 2, by + 14 + i * 16, 12, INK, 'center', BODY, '#fff', 0));
+  }
+}
+function drawHud() {
+  ctx.fillStyle = 'rgba(10,0,20,.82)'; ctx.fillRect(0, 0, W, 46);
+  ctx.fillRect(0, H - 40, W, 40);
+  const pips = (p, x, dir) => {
+    const al = dir > 0 ? 'left' : 'right';
+    txt(`${p.id ? B_NAME : A_NAME} the ${p.cls}`, x, 11, 12, hsl(p.hue, 100, 70), al, BODY, INK, 0);
+    for (let i = 0; i < p.mx; i++) {
+      const px = x + dir * (i * 14 + (dir > 0 ? 6 : -6));
+      circle(px, 26, 5, i < p.hp ? hsl(p.hue, 100, 62) : '#2a1740', i < p.hp ? INK : '#5a3a7a', 2);
+    }
+    const ready = (p.spCd || 0) <= 0, bx = dir > 0 ? x : x - 90;
+    ctx.fillStyle = '#2a1740'; ctx.fillRect(bx, 38, 90, 5);
+    ctx.fillStyle = ready ? '#ffe14d' : '#8a6aa8'; ctx.fillRect(bx, 38, 90 * (ready ? 1 : 1 - p.spCd / CLASSES[p.cls].cd), 5);
+    txt(`${kn(CTRL[p.id].s)} ${CLASSES[p.cls].sp}`, dir > 0 ? x + 98 : x - 98, 40, 10, ready ? '#fff36b' : '#c9a8ff', al, BODY, INK, 0);
+  };
+  pips(D.players[0], 16, 1); pips(D.players[1], W - 16, -1);
+  if (D.tut) {
+    txt(`ORIENTATION  ${D.tut.step + 1} / ${TUT.length}`, W / 2, 14, 18, '#fff36b', 'center', DISP, INK, 0);
+    txt('K: skip orientation', W / 2, 34, 11, '#c9a8ff', 'center', BODY, INK, 0);
+  } else txt(`${L('day')} ${G.day} / 7`, W / 2, 14, 18, '#fff36b', 'center', DISP, INK, 0);
+  if (!D.tut && !D.world) txt(`${Math.max(0, Math.ceil(D.timeLeft))}s`, W / 2 - 110, 30, 14, D.timeLeft < 10 ? '#ff6b6b' : '#fff', 'center', BODY, INK, 0);
+  for (let i = 0; !D.tut && !D.world && i < D.need; i++) {
+    ctx.save(); ctx.translate(W / 2 - (D.need - 1) * 12 + i * 24, 33); ctx.rotate(.785);
+    ctx.fillStyle = i < D.got ? '#fff36b' : '#2a1740'; ctx.fillRect(-6, -6, 12, 12); ctx.strokeStyle = i < D.got ? INK : '#5a3a7a'; ctx.lineWidth = 2; ctx.strokeRect(-6, -6, 12, 12);
+    ctx.restore();
+  }
+  if (!D.tut && !D.world) txt(L('plot'), W / 2 + 110, 30, 11, '#c9a8ff', 'center', BODY, INK, 0);
+  // bottom
+  ctx.save(); ctx.translate(26, H - 20); ctx.fillStyle = '#fff36b'; ctx.beginPath(); for (let k = 0; k < 6; k++) { const a = k * 1.047; ctx.lineTo(Math.cos(a) * 9, Math.sin(a) * 9); } ctx.closePath(); ctx.fill(); ctx.restore();
+  txt(`${G.thing}  ${L('thing')}`, 44, H - 20, 14, '#fff', 'left', BODY, INK, 0);
+  txt(L('sense'), W / 2 - 40, H - 20, 12, '#c9a8ff', 'right', BODY, INK, 0);
+  ctx.fillStyle = '#2a1740'; ctx.fillRect(W / 2 - 30, H - 28, 200, 16);
+  ctx.fillStyle = G.sense > 60 ? '#7dff6b' : G.sense > 30 ? '#ffd23f' : '#ff4d6d'; ctx.fillRect(W / 2 - 30, H - 28, 2 * G.sense, 16);
+  ctx.strokeStyle = '#c9a8ff'; ctx.lineWidth = 2; ctx.strokeRect(W / 2 - 30, H - 28, 200, 16);
+  if (D.lastRoll && T - D.lastRoll.at < 4) {
+    ctx.globalAlpha = clamp((4 - (T - D.lastRoll.at)) * 1.5, 0, 1);
+    ctx.fillStyle = '#0a0014'; ctx.strokeStyle = D.lastRoll.d === 20 ? '#ffe14d' : D.lastRoll.d === 1 ? '#ff4d6d' : '#c9a8ff'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.roundRect(W / 2 + 190, H - 33, 84, 26, 6); ctx.fill(); ctx.stroke();
+    txt(`d20: ${D.lastRoll.d}`, W / 2 + 232, H - 20, 14, D.lastRoll.d === 20 ? '#ffe14d' : D.lastRoll.d === 1 ? '#ff4d6d' : '#fff', 'center', BODY, INK, 0);
+    ctx.globalAlpha = 1;
+  }
+  txt(`Unreasonableness ${D.tut ? D.tut.reb : D.world ? Math.round(D.w.unr) + '%' : G.chaos}`, W - 16, H - 20, 14, hsl(hueNow() + 180, 100, 70), 'right', BODY, INK, 0);
+}
+function drawScene() {
+  D.haz.forEach(h => { if (h.type === 'sun') drawSunBeam(h); });
+  D.fx.forEach(f => {
+    if (f.type === 'boom') { if (f.t < .45) circle(f.x, f.y, 95 * (f.t / .45), `rgba(255,140,30,${.7 * (1 - f.t / .45)})`, '#fff3b0', 4); return; }
+    if (f.type !== 'cheese') return;
+    if (f.t < 1.6) {
+      ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(f.x, f.y, 10 + f.t * 16, 6 + f.t * 10, 0, 0, 6.28); ctx.fill();
+      const yy = f.y - (1.6 - f.t) * 320;
+      ctx.fillStyle = '#ffd23f'; ctx.strokeStyle = INK; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(f.x - 16, yy + 8); ctx.lineTo(f.x + 16, yy + 8); ctx.lineTo(f.x + 10, yy - 12); ctx.closePath(); ctx.fill(); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#ffd23f'; ctx.strokeStyle = INK; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(f.x - 16, f.y + 8); ctx.lineTo(f.x + 16, f.y + 8); ctx.lineTo(f.x + 10, f.y - 12); ctx.closePath(); ctx.fill(); ctx.stroke();
+      circle(f.x + 2, f.y + 1, 3, '#d9a400');
+    }
+  });
+  D.items.forEach(drawThing);
+  D.plots.forEach(drawPlot);
+  if (D.world) drawWorldThings();
+  D.enemies.slice().sort((a, b) => a.y - b.y).forEach(drawEnemy);
+  D.enemies.forEach(e => { if (e.dummy) txt(e.type === 'pivot' ? 'THE PIVOT (hit it!)' : 'practice goblin', e.x, e.y - 40, 11, '#fff', 'center'); });
+  D.players.forEach(drawPlayer);
+  drawIntern();
+  D.haz.forEach(h => { if (h.type === 'pend') drawPend(h); });
+  D.shots.forEach(s => {
+    circle(s.x, s.y, s.r, hsl(s.hue, 100, 60), INK, 2);
+    if (s.f) circle(s.x, s.y, s.r * .4, '#fff');
+  });
+  D.parts.forEach(q => { ctx.globalAlpha = clamp(q.life / q.max, 0, 1); ctx.fillStyle = hsl(q.hue, 100, 65); ctx.fillRect(q.x - q.size / 2, q.y - q.size / 2, q.size, q.size); });
+  ctx.globalAlpha = 1;
+  (D.texts || []).forEach(f => { ctx.globalAlpha = clamp(f.life * 1.6, 0, 1); txt(f.s, f.x, f.y, 13, f.col, 'center', BODY, INK, 4); });
+  ctx.globalAlpha = 1;
+}
+function drawSplit() {
+  const main = D.cam;
+  for (let i = 0; i < 2; i++) {
+    const c = D.pcam[i];
+    D.cam = c;
+    ctx.save(); ctx.beginPath(); ctx.rect(i * PW, 0, PW, H); ctx.clip();
+    ctx.save(); ctx.translate(i * PW, 0); ctx.scale(ZOOM, ZOOM); ctx.translate(-Math.round(c.x), -Math.round(c.y));
+    drawWorldGround(); drawScenery(); drawScene();
+    ctx.restore();
+    drawNight();
+    ctx.restore();
+  }
+  D.cam = main;
+  ctx.fillStyle = INK; ctx.fillRect(PW - 3, 0, 6, H);
+  ctx.fillStyle = '#fff'; ctx.fillRect(PW - 1, 0, 2, H);
+}
+function drawPlay() {
+  ctx.save();
+  if (D.shake > 0) ctx.translate(rnd(-D.shake, D.shake) * .5, rnd(-D.shake, D.shake) * .5);
+  if (D.world && D.split) drawSplit();
+  else {
+    if (D.world) { ctx.scale(ZOOM, ZOOM); ctx.translate(-Math.round(D.cam.x), -Math.round(D.cam.y)); drawWorldGround(); drawScenery(); }
+    else { drawFloor(); drawSunCorner(); }
+    drawScene();
+  }
+  ctx.restore();
+  if (D.world && !D.split) drawNight();
+  drawHud();
+  if (D.world) drawWorldHud();
+  if (D.tut && D.intro <= 0) drawTutPanel();
+  if (D.banner) {
+    ctx.globalAlpha = clamp(D.banner.t * 2, 0, 1);
+    txt(D.banner.text, W / 2, D.world ? 176 : 84, 22, '#fff', 'center', DISP, INK, 6);
+    ctx.globalAlpha = 1;
+  }
+  if (D.drift) txt('drifting ' + (D.drift.x > 0 ? '>' : '<') + ' ' + (D.drift.y > 0 ? 'v' : '^'), W / 2, H - 56, 13, '#fff', 'center');
+  if (D.card) drawCard();
+  if (D.intro > 0 && D.tut) {
+    ctx.fillStyle = 'rgba(232,238,228,.94)'; ctx.fillRect(0, 0, W, H);
+    txt('ORIENTATION', W / 2, 200, 54, '#2d5a3d', 'center', DISP, '#ffffff', 6);
+    txt('Everything here is perfectly reasonable.', W / 2, 270, 20, '#2d3a30', 'center', BODY, '#ffffff', 0);
+    txt('Please keep your hands inside the game at all times.', W / 2, 310, 16, '#4b6a55', 'center', BODY, '#ffffff', 0);
+  } else if (D.intro > 0) {
+    ctx.fillStyle = 'rgba(10,0,20,.78)'; ctx.fillRect(0, 0, W, H);
+    const ch = CHAPTERS[G.day - 1];
+    txt(`SESSION ${G.day} OF 7`, W / 2, 56, 16, '#c9a8ff', 'center', BODY, INK, 0);
+    const nm = wrap(ch.name, 820, 38, DISP);
+    nm.forEach((l, i) => txt(l, W / 2, 100 + i * 44, 38, '#fff36b', 'center', DISP, INK, 8));
+    const ra = wrap(D.readAloud, 640, 16), by = 100 + nm.length * 44 + 14, bh = ra.length * 24 + 46;
+    ctx.fillStyle = 'rgba(245,232,200,.96)'; ctx.strokeStyle = '#7a2a1a'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.roundRect(120, by, 720, bh, 6); ctx.fill(); ctx.stroke();
+    txt('READ ALOUD', 142, by + 16, 11, '#7a2a1a', 'left', BODY, '#f5e8c8', 0);
+    ra.forEach((l, i) => txt(l, W / 2, by + 42 + i * 24, 16, '#2a1a10', 'center', BODY, '#f5e8c8', 0));
+    txt(`Objective: gather ${D.need} ${L('plot').toLowerCase()} in ${Math.ceil(D.timeLeft)} seconds.`, W / 2, by + bh + 34, 17, '#fff', 'center');
+    txt(D.introLine, W / 2, by + bh + 64, 14, '#c9a8ff', 'center');
+    if (G.chaos > 0) txt(`Unreasonableness ${G.chaos}: it will be a lot.`, W / 2, by + bh + 90, 14, hsl(hueNow() + 180, 100, 70), 'center');
+    txt('Space: skip', W - 16, H - 16, 12, '#8a6aa8', 'right');
+  }
+}
+
+function drawWorldGround() {
+  const v = vl(), sat = clamp(14 + v * 20, 14, 92);
+  const x0 = Math.floor(D.cam.x / 80), y0 = Math.floor(D.cam.y / 80);
+  for (let ty = y0; ty <= y0 + 11; ty++) {
+    for (let tx = x0; tx <= x0 + 16; tx++) {
+      const rc = regionAt(tx * 80 + 40, ty * 80 + 40), alt = (tx + ty) & 1;
+      let h = REGHUE[rc.r][rc.c] + (alt ? 8 + v * 10 : 0) + Math.sin(T * .15 + tx * .3 + ty * .2) * v * 5;
+      if (v >= 2.5) h += Math.sin(T * .6 + tx * ty) * clamp((v - 2.5) * 14, 0, 60);
+      ctx.fillStyle = hsl(h, sat, alt ? 36 : 40);
+      ctx.fillRect(tx * 80, ty * 80, 80, 80);
+    }
+  }
+  circle(VIL.x, VIL.y, 235, 'rgba(236,224,196,.5)', 'rgba(120,90,50,.6)', 4);
+}
+function drawScenery() {
+  const v = vl(), cx = D.cam.x, cy = D.cam.y;
+  for (const b of OBS) {
+    if (b.x < cx - 90 || b.x > cx + VW + 90 || b.y < cy - 90 || b.y > cy + VH + 90) continue;
+    const wob = Math.sin(T * (.8 + v * .1) + b.ph) * v * 1.2, hh = b.hue + (v > 2 ? Math.sin(T * .3 + b.ph) * 40 * (v - 2) / 4 : 0);
+    ctx.save(); ctx.translate(b.x + wob, b.y);
+    ctx.strokeStyle = INK; ctx.lineWidth = 3;
+    switch (b.k) {
+      case 'tree':
+        ctx.fillStyle = 'rgba(0,0,0,.2)'; ctx.beginPath(); ctx.ellipse(0, b.r * .6, b.r, b.r * .4, 0, 0, 6.28); ctx.fill();
+        ctx.fillStyle = '#5a3a22'; ctx.fillRect(-4, -4, 8, b.r * .8);
+        circle(0, -b.r * .5, b.r, hsl(110 + hh * .5, 38 + v * 6, 30), INK, 3); break;
+      case 'rock':
+        circle(0, 0, b.r, hsl(30 + hh * .3, 8 + v * 4, 46), INK, 3); circle(-b.r * .25, -b.r * .25, b.r * .4, 'rgba(255,255,255,.18)'); break;
+      case 'cactus':
+        ctx.fillStyle = hsl(110 + hh * .4, 45, 34); ctx.fillRect(-5, -b.r * 1.4, 10, b.r * 2); ctx.strokeRect(-5, -b.r * 1.4, 10, b.r * 2);
+        ctx.fillRect(-b.r, -b.r * .6, b.r - 4, 7); ctx.fillRect(4, -b.r * .9, b.r - 4, 7); break;
+      case 'reed':
+        ctx.strokeStyle = hsl(80 + hh * .3, 40, 38); ctx.lineWidth = 3;
+        for (let k = -1; k <= 1; k++) { ctx.beginPath(); ctx.moveTo(k * 5, 6); ctx.lineTo(k * 8 + Math.sin(T + b.ph + k) * 2, -b.r * 1.6); ctx.stroke(); } break;
+      case 'chair':
+        ctx.fillStyle = hsl(30 + hh, 50, 40); ctx.fillRect(-b.r * .6, -2, b.r * 1.2, 7); ctx.strokeRect(-b.r * .6, -2, b.r * 1.2, 7);
+        ctx.fillRect(-b.r * .6, -b.r * 1.1, 5, b.r * 1.1); ctx.fillRect(-b.r * .6, 5, 4, 9); ctx.fillRect(b.r * .6 - 4, 5, 4, 9); break;
+      case 'house': case 'inn':
+        ctx.fillStyle = hsl(40 + hh * .2, 30, 62); ctx.fillRect(-b.r, -b.r * .55, b.r * 2, b.r * 1.45); ctx.strokeRect(-b.r, -b.r * .55, b.r * 2, b.r * 1.45);
+        ctx.fillStyle = hsl(b.k === 'inn' ? 10 : 0 + hh, 45 + v * 8, 40); ctx.beginPath(); ctx.moveTo(-b.r - 8, -b.r * .55); ctx.lineTo(0, -b.r * 1.3); ctx.lineTo(b.r + 8, -b.r * .55); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#5a3a22'; ctx.fillRect(-7, b.r * .35, 14, b.r * .55);
+        if (b.k === 'inn') txt('INN', 0, -b.r * 1.5, 14, '#fff36b', 'center', DISP, INK, 4);
+        break;
+      case 'fountain':
+        circle(0, 0, b.r, '#9aa4b8', INK, 4); circle(0, 0, b.r - 8, hsl(200, 70, 55)); circle(0, -2, 6 + Math.sin(T * 4) * 2, '#d8f4ff'); break;
+    }
+    ctx.restore();
+  }
+}
+function drawAnom(a) {
+  const bob = Math.sin(T * 2 + a.x) * 4, col = a.hit > 0 ? '#fff' : hsl(a.hue + T * 60, 100, 62);
+  ctx.save(); ctx.translate(a.x, a.y + bob);
+  circle(0, 0, 36, `rgba(255,80,220,${.12 + .08 * Math.sin(T * 5)})`);
+  ctx.fillStyle = col; ctx.strokeStyle = INK; ctx.lineWidth = 3;
+  switch (a.kind) {
+    case 'upside-down tree': ctx.fillRect(-5, -34, 10, 24); ctx.strokeRect(-5, -34, 10, 24); circle(0, 4, 18, col, INK, 3); break;
+    case 'floating chair': ctx.fillRect(-14, -6, 28, 8); ctx.strokeRect(-14, -6, 28, 8); ctx.fillRect(-14, -28, 6, 22); ctx.strokeRect(-14, -28, 6, 22); ctx.fillRect(-12, 2, 4, 8); ctx.fillRect(8, 2, 4, 8); break;
+    case 'sign pointing at itself': ctx.fillRect(-3, -4, 6, 28); ctx.fillRect(-20, -26, 40, 18); ctx.strokeRect(-20, -26, 40, 18); txt('<-', 0, -17, 12, INK, 'center', BODY, col, 0); break;
+    case 'clock with 13 hours': circle(0, 0, 20, '#fff', INK, 3); for (let k = 0; k < 13; k++) { const t2 = k / 13 * 6.283; ctx.beginPath(); ctx.moveTo(Math.cos(t2) * 15, Math.sin(t2) * 15); ctx.lineTo(Math.cos(t2) * 19, Math.sin(t2) * 19); ctx.stroke(); } ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(T) * 12, Math.sin(T) * 12); ctx.stroke(); break;
+    default: ctx.fillRect(-18, 4, 36, 8); ctx.strokeRect(-18, 4, 36, 8); ctx.fillStyle = '#7dff6b'; ctx.fillRect(-16, -4, 32, 8); ctx.fillStyle = col; ctx.fillRect(-18, -12, 36, 8); ctx.strokeRect(-18, -12, 36, 8); ctx.fillRect(-18, -34, 8, 22);
+  }
+  ctx.restore();
+  txt(a.kind, a.x, a.y - 52, 11, '#ffd1f4', 'center');
+}
+function drawNPC(n) {
+  const bob = Math.sin(T * 3 + n.x) * 1.5;
+  ctx.save(); ctx.translate(n.x, n.y + bob);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(0, 14, 14, 5, 0, 0, 6.28); ctx.fill();
+  circle(0, 0, 15, n.kind === 'mayor' ? '#e8b04a' : '#4aa8e8', INK, 3);
+  ctx.fillStyle = n.kind === 'mayor' ? '#3a2a6a' : '#7a2a1a'; ctx.fillRect(-11, -22, 22, 9); ctx.strokeRect(-11, -22, 22, 9);
+  eyes(0, -1, 5, 3.4, 0, 1);
+  ctx.restore();
+  txt(n.name, n.x, n.y - 36, 11, '#fff', 'center');
+  if (n.kind === 'mayor' && D.w.state === 'turnin') txt('!', n.x, n.y - 56, 28, '#ffe14d', 'center', DISP, INK, 5);
+  if (n.kind === 'merch') txt('$', n.x, n.y - 54, 20, '#7dff6b', 'center', DISP, INK, 5);
+}
+function drawWorldThings() {
+  D.anoms.forEach(a => { if (!a.dead) drawAnom(a); });
+  D.npcs.forEach(drawNPC);
+}
+function drawNight() {
+  const ph = (D.w.clock % DAYLEN) / DAYLEN;
+  let a = 0;
+  if (ph > .6 && ph <= .7) a = (ph - .6) / .1 * .5; else if (ph > .7 && ph <= .9) a = .5; else if (ph > .9) a = .5 * (1 - (ph - .9) / .1);
+  if (a > .01) { ctx.fillStyle = hsl(250 + Math.sin(T * .2) * vl() * 20, 60, 8, a); ctx.fillRect(0, 0, W, H); }
+}
+function drawMinimap() {
+  const mw = 168, mh = 112, mx = W - mw - 12, my = H - 40 - mh - 10, sx = mw / WW, sy = mh / WH;
+  ctx.fillStyle = 'rgba(10,0,20,.82)'; ctx.fillRect(mx - 3, my - 3, mw + 6, mh + 6);
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) { ctx.fillStyle = hsl(REGHUE[r][c], 35, 28); ctx.fillRect(mx + c * mw / 3, my + r * mh / 3, mw / 3 - 1, mh / 3 - 1); }
+  ctx.fillStyle = '#ece0c4'; ctx.fillRect(mx + VIL.x * sx - 4, my + VIL.y * sy - 3, 8, 6);
+  D.anoms.forEach(a => { ctx.fillStyle = '#ff4de0'; ctx.fillRect(mx + a.x * sx - 1.5, my + a.y * sy - 1.5, 3, 3); });
+  D.plots.forEach(q => { ctx.fillStyle = '#ffe14d'; ctx.fillRect(mx + q.x * sx - 2, my + q.y * sy - 2, 4, 4); });
+  const tg = questTarget();
+  if (tg) { ctx.strokeStyle = '#ffe14d'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(mx + tg.x * sx, my + tg.y * sy, 5, 0, 6.28); ctx.stroke(); }
+  D.players.forEach(q => { ctx.fillStyle = hsl(q.hue, 100, 65); ctx.fillRect(mx + q.x * sx - 2, my + q.y * sy - 2, 4, 4); });
+  ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 1;
+  if (D.split) D.pcam.forEach(c => ctx.strokeRect(mx + c.x * sx, my + c.y * sy, PWW * sx, VH * sy)); else ctx.strokeRect(mx + D.cam.x * sx, my + D.cam.y * sy, VW * sx, VH * sy);
+}
+function drawCompass() {
+  const tg = questTarget();
+  if (!tg) return;
+  const views = D.split ? [0, 1].map(i => ({ ox: i * PW, vw: PW, cam: D.pcam[i], from: D.players[i] })) : [{ ox: 0, vw: W, cam: D.cam, from: D.mid }];
+  views.forEach(v => {
+    const sx0 = (tg.x - v.cam.x) * ZOOM, sy0 = (tg.y - v.cam.y) * ZOOM;
+    if (sx0 > 40 && sx0 < v.vw - 40 && sy0 > 90 && sy0 < H - 60) { txt('v', v.ox + sx0, sy0 - 44 + Math.sin(T * 5) * 4, 20, '#ffe14d', 'center', DISP, INK, 4); return; }
+    const a = Math.atan2(tg.y - v.from.y, tg.x - v.from.x);
+    const px = v.ox + v.vw / 2 + Math.cos(a) * (v.vw / 2 - 50), py = H / 2 + 6 + Math.sin(a) * (H / 2 - 112);
+    ctx.save(); ctx.translate(px, py); ctx.rotate(a);
+    ctx.fillStyle = '#ffe14d'; ctx.strokeStyle = INK; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(-10, -11); ctx.lineTo(-10, 11); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    txt(`${Math.round(dist(tg, v.from) / 10)}m`, px, py + 22, 11, '#fff', 'center');
+  });
+}
+function drawWorldHud() {
+  const w = D.w, ph = (w.clock % DAYLEN) / DAYLEN;
+  txt(`${phaseName(ph)}  |  day ends in ${Math.ceil(DAYLEN - (w.clock % DAYLEN))}s`, W / 2, 34, 11, '#c9a8ff', 'center', BODY, INK, 0);
+  const q = QUESTS[w.qi], hl = wrap(`CHAPTER ${w.qi + 1}: ${q.name}`, 276, 12), bl = wrap(questLine(), 276, 12), h = 16 + (hl.length + bl.length) * 16;
+  ctx.fillStyle = 'rgba(10,0,20,.74)'; ctx.strokeStyle = '#ffe14d'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.roundRect(10, 54, 300, h, 8); ctx.fill(); ctx.stroke();
+  hl.forEach((l, i) => txt(l, 22, 54 + 14 + i * 16, 12, '#ffe14d', 'left', BODY, INK, 0));
+  bl.forEach((l, i) => txt(l, 22, 54 + 14 + (hl.length + i) * 16, 12, '#fff', 'left', BODY, INK, 0));
+  const nx = LVX[Math.min(G.level, LVX.length - 1)];
+  txt(`Lv ${G.level}  XP ${G.xp}${G.level < LVX.length ? '/' + nx : ''}`, 250, H - 20, 13, '#fff36b', 'left', BODY, INK, 0);
+  drawMinimap(); drawCompass(); drawTip();
+}
+function drawCard() {
+  const c = D.card;
+  ctx.fillStyle = 'rgba(10,0,20,.84)'; ctx.fillRect(0, 0, W, H);
+  txt(c.sub, W / 2, 62, 16, '#c9a8ff', 'center', BODY, INK, 0);
+  const nm = wrap(c.title, 820, 38, DISP);
+  nm.forEach((l, i) => txt(l, W / 2, 112 + i * 44, 38, '#fff36b', 'center', DISP, INK, 8));
+  const ra = wrap(c.text, 640, 16), by = 112 + nm.length * 44 + 14, bh = ra.length * 24 + 46;
+  ctx.fillStyle = 'rgba(245,232,200,.96)'; ctx.strokeStyle = '#7a2a1a'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.roundRect(120, by, 720, bh, 6); ctx.fill(); ctx.stroke();
+  txt('READ ALOUD', 142, by + 16, 11, '#7a2a1a', 'left', BODY, '#f5e8c8', 0);
+  ra.forEach((l, i) => txt(l, W / 2, by + 42 + i * 24, 16, '#2a1a10', 'center', BODY, '#f5e8c8', 0));
+  if (c.foot) txt(c.foot, W / 2, by + bh + 34, 15, '#fff', 'center');
+  txt('Space: continue', W / 2, H - 30, 13, '#8a6aa8', 'center');
+}
+function drawTutPanel() {
+  const t = D.tut, s = TUT[t.step];
+  if (!s) return;
+  const lines = wrap(typeof s.text === 'function' ? s.text() : s.text, 700, 15), ad = s.ad === undefined ? 4 : s.ad;
+  const aside = t.st > ad ? wrap(s.aside, 700, 15) : [];
+  const h = 40 + (lines.length + aside.length) * 20;
+  const y = H - 40 - 8 - h;
+  ctx.fillStyle = hsl(140 + t.reb * 38, 28 + t.reb * 10, 16, .88); ctx.strokeStyle = INK; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.roundRect(70, y, 820, h, 10); ctx.fill(); ctx.stroke();
+  txt(s.title, 90, y + 16, 13, '#fff36b', 'left', BODY, INK, 0);
+  lines.forEach((l, i) => txt(l, 90, y + 38 + i * 20, 15, '#fff', 'left', BODY, INK, 0));
+  aside.forEach((l, i) => txt(l, 90, y + 38 + (lines.length + i) * 20, 15, hsl(hueNow() + 180, 100, 72), 'left', BODY, INK, 0));
+}
+const PB = i => ({ x: W / 2 - 170, y: 206 + i * 62, w: 340, h: 50 });
+function drawPause() {
+  ctx.fillStyle = 'rgba(10,0,20,.84)'; ctx.fillRect(0, 0, W, H);
+  txt('PAUSED', W / 2, 120, 54, '#fff36b', 'center', DISP, INK, 8);
+  txt(D.tut ? 'Orientation is waiting. It is very patient.' : `Session ${G.day} of 7 is holding still.`, W / 2, 168, 15, '#c9a8ff', 'center', BODY, INK, 0);
+  const labels = [['Resume', 'Esc / P'], [D.tut ? 'Restart orientation' : 'Recall to village', 'R'], ['Controls', 'C'], ['Sound: ' + (musicOn ? 'on' : 'off'), 'M'], ['Quit to title', 'Q']];
+  labels.forEach((l, i) => {
+    const b = PB(i);
+    ctx.fillStyle = hsl(hueNow() + i * 70, 80, 48); ctx.strokeStyle = INK; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 10); ctx.fill(); ctx.stroke();
+    txt(l[0], b.x + 20, b.y + 26, 19, '#fff', 'left', DISP, INK, 5);
+    txt(l[1], b.x + b.w - 16, b.y + 26, 14, INK, 'right', BODY, '#fff', 0);
+  });
+  txt(`Sir Quibble: ${ctlStr(0)}      Dame Grimsby: ${ctlStr(1)}`, W / 2, 536, 14, '#fff', 'center', BODY, INK, 0);
+}
+
+function drawZero() {
+  ctx.fillStyle = hsl(30 + Math.sin(T * .2) * 10, 35, 14); ctx.fillRect(0, 0, W, H);
+  txt('SESSION ZERO', W / 2, 46, 40, '#fff36b', 'center', DISP, INK, 7);
+  txt('Roll your characters. Your Dungeon Master is already nervous.', W / 2, 82, 14, '#c9a8ff', 'center', BODY, INK, 0);
+  for (let i = 0; i < 2; i++) {
+    const ch = G.chars[i], k = CLASSES[ch.cls], x0 = ZX(i), ai = G.mode === 1 && i === 1, hc = i ? 190 : 322;
+    ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.strokeStyle = hsl(hc, 100, 65); ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.roundRect(x0, 110, 430, 400, 12); ctx.fill(); ctx.stroke();
+    txt(`${i ? B_NAME : A_NAME}${ai ? ' (volunteer)' : ''}`, x0 + 215, 130, 15, hsl(hc, 100, 72), 'center', BODY, INK, 0);
+    txt(ch.cls, x0 + 215, 172, 30, '#fff', 'center', DISP, INK, 6);
+    if (!ai) [['prev', '<'], ['next', '>']].forEach(([n, g]) => {
+      const b = ZB(i, n); ctx.fillStyle = hsl(hc, 80, 40); ctx.strokeStyle = INK; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 8); ctx.fill(); ctx.stroke();
+      txt(g, b.x + b.w / 2, b.y + 23, 24, '#fff', 'center', DISP, INK, 4);
+    });
+    txt(`d${k.hd} hit die   |   attacks with ${k.atk.toUpperCase()}`, x0 + 215, 214, 13, '#c9a8ff', 'center', BODY, INK, 0);
+    wrap(k.desc, 390, 14).forEach((l, n) => txt(l, x0 + 215, 240 + n * 19, 14, '#fff', 'center', BODY, INK, 0));
+    STATN.forEach((sn, n) => {
+      const v = ch.stats[sn], y = 312 + n * 24, main = sn === k.atk;
+      txt(sn.toUpperCase(), x0 + 36, y, 14, main ? '#ffe14d' : '#fff', 'left', BODY, INK, 0);
+      txt(String(v), x0 + 110, y, 14, main ? '#ffe14d' : '#fff', 'center', BODY, INK, 0);
+      const m = mod(v);
+      txt((m >= 0 ? '+' : '') + m, x0 + 160, y, 14, m > 0 ? '#7dff6b' : m < 0 ? '#ff6b8a' : '#c9a8ff', 'center', BODY, INK, 0);
+      ctx.fillStyle = '#2a1740'; ctx.fillRect(x0 + 200, y - 6, 200, 12);
+      ctx.fillStyle = main ? '#ffe14d' : hsl(hc, 80, 60); ctx.fillRect(x0 + 200, y - 6, 200 * clamp((v - 3) / 15, 0, 1), 12);
+    });
+    if (!ai) {
+      [['reroll', `Reroll dice (${ch.rerolls})`, ch.rerolls > 0 && !ZERO.ready[i] ? 50 : 270], ['ready', ZERO.ready[i] ? 'READY!  (undo)' : 'Ready', ZERO.ready[i] ? 130 : 200]].forEach(([n, label, h]) => {
+        const b = ZB(i, n); ctx.fillStyle = hsl(h, 70, 42); ctx.strokeStyle = INK; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 8); ctx.fill(); ctx.stroke();
+        txt(label, b.x + b.w / 2, b.y + 23, 15, '#fff', 'center', DISP, INK, 4);
+      });
+    } else txt('Ready. Mostly.', x0 + 215, 474, 16, '#7dff6b', 'center', BODY, INK, 0);
+  }
+  [0, 1].forEach(i => { if (!(G.mode === 1 && i === 1)) txt(`${i ? B_NAME : A_NAME}: ${kn(CTRL[i].l)}/${kn(CTRL[i].r)} class  |  ${kn(CTRL[i].a)} reroll  |  ${kn(CTRL[i].s)} ready`, ZX(i) + 215, 530, 12, '#c9a8ff', 'center', BODY, INK, 0); });
+  txt('4d6, drop the lowest. The best rolls go to your class\'s best stats. Esc: back   C: controls', W / 2, 566, 12, '#8a6aa8', 'center', BODY, INK, 0);
+}
+
+/* ---------- other scenes ---------- */
+const BTN = { solo: { x: W / 2 - 320, y: 410, w: 300, h: 80 }, two: { x: W / 2 + 20, y: 410, w: 300, h: 80 } };
+function hit(b, x, y) { return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h; }
+function drawButton(b, label, sub, hue) {
+  ctx.fillStyle = hsl(hue, 100, 55); ctx.strokeStyle = INK; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 10); ctx.fill(); ctx.stroke();
+  txt(label, b.x + b.w / 2, b.y + 30, 24, '#fff', 'center', DISP, INK, 6);
+  txt(sub, b.x + b.w / 2, b.y + 60, 13, INK, 'center', BODY, '#fff', 0);
+}
+function drawTitle() {
+  const h0 = (T * 40) % 360;
+  for (let ty = 0; ty < 10; ty++) for (let tx = 0; tx < 16; tx++) { ctx.fillStyle = hsl(h0 + (((tx + ty) & 1) ? 150 : 0), 92, ((tx + ty) & 1) ? 48 : 56); ctx.fillRect(tx * 60, ty * 60, 60, 60); }
+  drawSunCorner();
+  const a = .9 * Math.sin(T * 1.6), px = W / 2, len = 190, bx = px + Math.sin(a) * len, by = Math.cos(a) * len;
+  ctx.strokeStyle = INK; ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(bx, by); ctx.stroke();
+  circle(bx, by, 32, '#191022', '#d9d9e6', 5);
+  ctx.strokeStyle = '#ff2f4d'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(bx - 19, by - 14); ctx.lineTo(bx - 5, by - 8); ctx.moveTo(bx + 19, by - 14); ctx.lineTo(bx + 5, by - 8); ctx.stroke();
+  circle(bx - 11, by - 1, 4.5, '#ff2f4d'); circle(bx + 11, by - 1, 4.5, '#ff2f4d');
+  txt('VENGEFUL', W / 2, 270, 64, '#fff36b', 'center', DISP, INK, 10);
+  txt('PENDULUM', W / 2, 335, 64, '#ff2fd1', 'center', DISP, INK, 10);
+  txt('One week. Two partners. One overenthusiastic intern.', W / 2, 382, 16, '#fff', 'center');
+  drawButton(BTN.solo, '1  SOLO', 'your partner is a volunteer', 150);
+  drawButton(BTN.two, '2  TWO PARTNERS', 'one keyboard, shared fate', 265);
+  txt('Explore the open world. Fix what is unreasonable. Let it slip, and it only gets worse.', W / 2, 530, 14, '#fff', 'center');
+  txt('Sound starts on your first key press. M toggles it.', W / 2, 556, 12, '#fff', 'center');
+  txt(`S: orientation ${skipTut ? 'OFF (straight to the world)' : 'ON (recommended)'}     C: controls`, W / 2, 508, 14, '#fff', 'center');
+}
+function drawSum() {
+  ctx.fillStyle = hsl(hueNow() + 200, 60, 18); ctx.fillRect(0, 0, W, H);
+  const s = G.sum;
+  txt(s.win ? 'THE STORY MADE SENSE' : 'THE STORY GOT AWAY', W / 2, 90, 40, s.win ? '#7dff6b' : '#ff6b8a', 'center', DISP, INK, 8);
+  const lines = wrap(s.line, 740, 20);
+  lines.forEach((l, i) => txt(l, W / 2, 180 + i * 30, 20, '#fff', 'center', BODY, INK, 0));
+  const y = 190 + lines.length * 30;
+  txt(`${L('plot')}: ${s.got} of ${s.need}   |   +${s.earned} ${L('thing')}   |   ${L('sense')} ${Math.round(G.sense)}`, W / 2, y + 30, 16, '#fff36b', 'center', BODY, INK, 0);
+  txt(s.win ? 'The world calms down a little.' : `Unreasonableness is now ${G.chaos}. The world noticed.`, W / 2, y + 66, 16, s.win ? '#7dff6b' : hsl(hueNow() + 180, 100, 70), 'center', BODY, INK, 0);
+  txt(G.day >= 7 ? 'Space: hear the Narrator' : 'Space: visit the shop', W / 2, 520, 20, '#fff', 'center', DISP, INK, 5);
+}
+const CARD = i => ({ x: 60 + i * 290, y: 150, w: 270, h: 250 });
+const CONT = { x: W / 2 - 130, y: 470, w: 260, h: 54 };
+function drawShop() {
+  ctx.fillStyle = hsl(hueNow() + 60, 55, 20); ctx.fillRect(0, 0, W, H);
+  txt('YE OLDE REASONABLE EMPORIUM', W / 2, 54, 32, '#fff36b', 'center', DISP, INK, 7);
+  txt(`${G.thing} ${L('thing')} to spend`, W / 2, 100, 18, '#fff', 'center', BODY, INK, 0);
+  SH.items.forEach((it, i) => {
+    const c = CARD(i);
+    ctx.fillStyle = it.bought ? '#2a1740' : hsl(hueNow() + i * 90, 85, 56); ctx.strokeStyle = INK; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.roundRect(c.x, c.y, c.w, c.h, 12); ctx.fill(); ctx.stroke();
+    txt(String(i + 1), c.x + 28, c.y + 30, 30, '#fff', 'center', DISP, INK, 6);
+    wrap(it.name, 200, 22, DISP).forEach((l, k) => txt(l, c.x + c.w / 2 + 10, c.y + 40 + k * 28, 22, '#fff', 'center', DISP, INK, 5));
+    wrap(it.desc, 220, 15).forEach((l, k) => txt(l, c.x + c.w / 2, c.y + 130 + k * 20, 15, it.bought ? '#8a6aa8' : INK, 'center', BODY, '#fff', it.bought ? 0 : 0));
+    txt(it.bought ? 'SOLD' : `${it.cost} ${L('thing')}`, c.x + c.w / 2, c.y + c.h - 36, 18, '#fff', 'center', BODY, INK, 4);
+  });
+  const lines = wrap(SH.msg, 760, 15);
+  lines.forEach((l, k) => txt(l, W / 2, 424 + k * 20, 15, '#c9a8ff', 'center', BODY, INK, 0));
+  ctx.fillStyle = '#7dff6b'; ctx.strokeStyle = INK; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.roundRect(CONT.x, CONT.y, CONT.w, CONT.h, 10); ctx.fill(); ctx.stroke();
+  txt('Space: back to the world', CONT.x + CONT.w / 2, CONT.y + 28, 22, INK, 'center', DISP, '#fff', 0);
+}
+function drawEnd() {
+  const h = 235 + Math.sin(T * .1) * 10;
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, hsl(h, 40, 12)); g.addColorStop(1, hsl(h + 30, 45, 22));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(120,190,255,.5)';
+  E.drops.forEach(d => { ctx.beginPath(); ctx.ellipse(d.x, d.y, d.s * .7, d.s * 1.5, 0, 0, 6.28); ctx.fill(); });
+  const pg = ctx.createLinearGradient(0, H - E.puddle - 4, 0, H);
+  pg.addColorStop(0, 'rgba(120,190,255,.55)'); pg.addColorStop(1, 'rgba(60,120,220,.8)');
+  ctx.fillStyle = pg; ctx.fillRect(0, H - E.puddle, W, E.puddle);
+  txt("THE DUNGEON MASTER'S FAREWELL", W / 2, 44, 26, '#bfe3ff', 'center', DISP, INK, 6);
+  // stack: current line bottom-anchored, older lines fade upward
+  let yBottom = 470;
+  for (let i = E.i; i >= 0; i--) {
+    const ln = E.lines[i];
+    let s = ln.text;
+    if (i === E.i && !E.done) s = s.slice(0, Math.floor(E.t * 16));
+    const lines = wrap(ln.text, 780, i === E.i ? 22 : 17);
+    const shown = wrap(s, 780, i === E.i ? 22 : 17);
+    const size = i === E.i ? 22 : 17, lh = size * 1.4;
+    const top = yBottom - lines.length * lh;
+    if (top < 80) break;
+    ctx.globalAlpha = i === E.i ? 1 : clamp(1 - (E.i - i) * .22, .12, .7);
+    const col = ln.chaos >= 4 ? '#ffb3f0' : ln.chaos >= 2 ? '#ffe9a8' : '#e8f2ff';
+    shown.forEach((l, k) => txt(l, W / 2, top + k * lh + lh / 2, size, col, 'center', BODY, INK, 3));
+    ctx.globalAlpha = 1;
+    yBottom = top - 18;
+  }
+  if (E.done) {
+    txt('Space: play again', W / 2, H - 100, 20, '#fff', 'center', DISP, INK, 5);
+    txt(`Chapters completed: ${G.stats.wins}   Party wipes: ${G.stats.fails}   Monsters met: ${G.stats.kills}`, W / 2, H - 70, 13, '#bfe3ff', 'center', BODY, INK, 0);
+  } else txt('Space: skip line', W - 16, H - 82, 12, '#8fb4d9', 'right', BODY, INK, 0);
+}
+
+/* ---------- main loop ---------- */
+function tick(dt) {
+  T += dt;
+  if (!KM && pressed.has('KeyM')) { musicOn = !musicOn; if (!musicOn) { try { speechSynthesis.cancel(); } catch (e) {} } }
+  musicTick();
+  if (KM) { updateKM(); return; }
+  switch (G.scene) {
+    case 'title':
+      if (pressed.has('KeyS')) skipTut = !skipTut;
+      if (pressed.has('KeyC')) { openKM(); break; }
+      if (pressed.has('Digit1') || pressed.has('Numpad1')) newGame(1, skipTut);
+      else if (pressed.has('Digit2') || pressed.has('Numpad2')) newGame(2, skipTut);
+      break;
+    case 'play':
+      if (pressed.has('Escape') || pressed.has('KeyP')) paused = !paused;
+      if (pressed.has('KeyK') && D.tut && !paused) { startWorld(); break; }
+      if (paused) updatePause(); else updatePlay(dt);
+      break;
+    case 'sum': if (pressed.has('Space') || pressed.has('Enter')) afterSummary(); break;
+    case 'shop':
+      if (pressed.has('Digit1') || pressed.has('Numpad1')) buy(0);
+      if (pressed.has('Digit2') || pressed.has('Numpad2')) buy(1);
+      if (pressed.has('Digit3') || pressed.has('Numpad3')) buy(2);
+      if (pressed.has('Space')) nextDay();
+      break;
+    case 'end': updateEnd(dt); break;
+    case 'zero': updateZero(); break;
+  }
+}
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  switch (G.scene) {
+    case 'title': drawTitle(); break;
+    case 'play': drawPlay(); if (paused) drawPause(); break;
+    case 'sum': drawSum(); break;
+    case 'shop': drawShop(); break;
+    case 'end': drawEnd(); break;
+    case 'zero': drawZero(); break;
+  }
+}
+let last = 0;
+function frame(ts) {
+  const dt = Math.min(.05, (ts - last) / 1000 || 0);
+  last = ts;
+  try { tick(dt); draw(); if (KM) drawKM(); } catch (e) { console.error(e); }
+  pressed.clear();
+  requestAnimationFrame(frame);
+}
+cv.addEventListener('pointerdown', e => {
+  initAudio();
+  const r = cv.getBoundingClientRect();
+  const x = (e.clientX - r.left) * W / r.width, y = (e.clientY - r.top) * H / r.height;
+  if (KM) {
+    for (let n = 0; n < 12; n++) if (hit(KROW(n), x, y)) { KM.row = n; KM.wait = true; KM.msg = 'Press the new key. Esc cancels.'; }
+    if (hit(KBTN.reset, x, y)) { CTRL = JSON.parse(JSON.stringify(DEFAULT_KEYS)); saveKeys(); updateLegend(); KM.msg = 'Controls reset to defaults.'; }
+    if (hit(KBTN.back, x, y)) KM = null;
+  } else if (G.scene === 'play' && paused) {
+    if (hit(PB(0), x, y)) paused = false;
+    else if (hit(PB(1), x, y)) restartRound();
+    else if (hit(PB(2), x, y)) openKM();
+    else if (hit(PB(3), x, y)) musicOn = !musicOn;
+    else if (hit(PB(4), x, y)) quitToTitle();
+  } else if (G.scene === 'title') {
+    if (hit(BTN.solo, x, y)) newGame(1, skipTut); else if (hit(BTN.two, x, y)) newGame(2, skipTut);
+  } else if (G.scene === 'zero') zeroClick(x, y);
+  else if (G.scene === 'sum') afterSummary();
+  else if (G.scene === 'shop') {
+    for (let i = 0; i < 3; i++) if (hit(CARD(i), x, y)) buy(i);
+    if (hit(CONT, x, y)) nextDay();
+  } else if (G.scene === 'end') pressed.add('Space');
+});
+requestAnimationFrame(frame);
+})();
+</script>
+
+</body></html>
